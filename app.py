@@ -10,132 +10,112 @@ app = Flask(__name__)
 # --- CONFIGURATION ---
 GEMINI_KEY = os.environ.get("GEMINI")
 
-# --- THE COMPLETE "OMNI-SWARM" ROSTER (Backend Logic) ---
+# --- THE FULL ROSTER ---
 MODELS = {
-    "DIRECTOR": "gemini-3-flash",              # Logic & Review
+    "DIRECTOR": "gemini-3-flash",              # Final Code Review
     "SEARCH": "gemini-1.5-pro",                # Research/Facts
-    "ROBOTICS": "gemini-robotics-er-1.5-preview", # Physics/Constraints
-    "DIALOG": "gemini-2.5-flash-native-audio-dialog", # Natural Speech Patterns
-    "AUDIO": "gemini-2.5-flash-tts",           # Sound Service Logic
+    "ROBOTICS": "gemini-robotics-er-1.5-preview", # Physics constraints
+    "DIALOG": "gemini-2.5-flash-native-audio-dialog", # Speech patterns
+    "AUDIO": "gemini-2.5-flash-tts",           # SoundService logic
     "CREATIVE": "gemma-3-27b-it",              # Lore/Story
-    "WORKER": "gemini-2.5-flash",              # Building/General
+    "WORKER": "gemini-2.5-flash",              # Builder/Scripter
     "SCOUT": "gemini-2.5-flash-lite"           # Routing
 }
 
-# Status Tracking
+# Global State
 current_status = {
     "message": "System Ready",
-    "active_model": "None",
-    "agent": "Idle",
-    "logs": []
+    "logs": [],
+    "final_code": None,
+    "is_processing": False
 }
 
 def log_event(text, highlight=False):
-    # We add a prefix so the UI knows it's a server message
-    prefix = "✨ " if highlight else ""
+    prefix = "✨ " if highlight else ">> "
     print(f"{prefix}{text}")
-    current_status["logs"].append(text)
+    current_status["logs"].append(f"{prefix}{text}")
     current_status["message"] = text
 
-# --- UNIVERSAL CALLER ---
-def call_ai(model_key, prompt, system_role):
-    model_name = MODELS.get(model_key, MODELS["WORKER"])
-    current_status["active_model"] = model_name.upper()
-    
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={GEMINI_KEY}"
-    
-    payload = {
-        "contents": [{ "parts": [{ "text": f"{system_role}\n\nSpecific Task: {prompt}" }] }]
-    }
+# --- ROBUST AI CALLER ---
+def call_ai(primary_role, prompt, system_instruction):
+    primary_model = MODELS.get(primary_role, MODELS["WORKER"])
+    fallback_model = MODELS["WORKER"]
 
+    def _send(model_name, p, s):
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={GEMINI_KEY}"
+        payload = { "contents": [{ "parts": [{ "text": f"{s}\n\nTask: {p}" }] }] }
+        return requests.post(url, json=payload)
+
+    # 1. Try Primary
     try:
-        r = requests.post(url, json=payload)
-        data = r.json()
+        response = _send(primary_model, prompt, system_instruction)
+        data = response.json()
         if "candidates" in data:
             return data["candidates"][0]["content"]["parts"][0]["text"]
-        elif "error" in data:
-            log_event(f"⚠️ {model_name} Busy/Error: {data['error']['message']}. Switching to Worker...")
-            return call_ai("WORKER", prompt, system_role)
+        
+        err = data.get("error", {}).get("message", "Unknown Error")
+        log_event(f"⚠️ {primary_role} Busy: {err}")
+        log_event(f"🔄 Switching to Fallback Worker...")
+
     except Exception as e:
-        log_event(f"❌ Connection Error on {model_name}: {str(e)}")
-        return None
+        log_event(f"❌ Connection Fail: {e}")
 
-# --- SPECIALIST AGENTS (The Logic) ---
-
-def run_router(prompt):
-    log_event(f"🔍 [SCOUT] Analyzing request: '{prompt}'...")
-    instruction = (
-        "Analyze request. Return JSON with booleans:\n"
-        "{ \"needs_search\": bool (true if asking for real world facts/specific items),\n"
-        "\"needs_physics\": bool (true if moving parts/motors),\n"
-        "\"needs_lore\": bool (true if story),\n"
-        "\"needs_dialog\": bool (true if NPCs talking),\n"
-        "\"needs_sound\": bool (true if sfx/music),\n"
-        "\"needs_build\": bool }"
-    )
-    res = call_ai("SCOUT", instruction + f"\nRequest: {prompt}", "You are a JSON Router.")
+    # 2. Try Fallback
     try:
-        clean = res.replace("```json", "").replace("```", "")
-        return json.loads(clean)
+        response = _send(fallback_model, prompt, system_instruction)
+        data = response.json()
+        if "candidates" in data:
+            return data["candidates"][0]["content"]["parts"][0]["text"]
     except:
-        return {"needs_build": True, "needs_search": True} 
+        log_event("💀 CRITICAL: All agents failed.")
+    
+    return None
 
-def run_searcher(query):
-    log_event(f"🌍 [SEARCHER] Retrieving data on: {query}...")
-    instruction = "You are a Research Engine. Provide technical details (Color RGB, Size, Key Parts) for a Roblox Builder."
-    return call_ai("SEARCH", query, instruction)
-
-def run_robotics_engineer(prompt, context):
-    log_event("⚙️ [ROBOTICS] Calculating constraints...")
+# --- AGENT FUNCTIONS ---
+def run_router(prompt):
+    log_event(f"🔍 [SCOUT] Analyzing request...")
     instruction = (
-        f"You are a Robotics Engineer. Context: {context}. "
-        "Write Roblox Lua for mechanical parts using HingeConstraint/Motor6D. Return ONLY Lua."
+        "Return JSON booleans: "
+        "{ \"needs_search\": bool, \"needs_physics\": bool, \"needs_lore\": bool, "
+        "\"needs_dialog\": bool, \"needs_sound\": bool, \"needs_build\": bool }"
     )
-    return call_ai("ROBOTICS", prompt, instruction)
+    res = call_ai("SCOUT", prompt, instruction)
+    try:
+        return json.loads(res.replace("```json", "").replace("```", ""))
+    except:
+        return {"needs_build": True}
 
-def run_creative_writer(prompt):
-    log_event("📖 [GEMMA] Drafting lore...")
-    instruction = "You are a Creative Writer. Write a Lua script that creates Lore StringValues. Return ONLY Lua."
-    return call_ai("CREATIVE", prompt, instruction)
+def run_specialist(role, name, prompt, context=""):
+    log_event(f"⚡ [{name}] Working...")
+    inst = f"You are a Specialist. Context: {context}. Return ONLY Lua code."
+    return call_ai(role, prompt, inst)
 
-def run_dialogue_coach(prompt):
-    log_event("🗣️ [NATIVE-DIALOG] Formatting speech patterns...")
-    instruction = (
-        "You are a Dialogue Coach. Use your training in natural audio patterns to write a Lua Table of dialogue. "
-        "Include fields for 'Text', 'Delay', and 'Emotion'. "
-        "Make the text feel natural and conversational. Return ONLY Lua."
-    )
-    return call_ai("DIALOG", prompt, instruction)
-
-def run_audio_engineer(prompt):
-    log_event("🔊 [TTS-AUDIO] Designing soundscape...")
-    instruction = "You are an Audio Director. Write Lua using TextChatService and SoundService. Return ONLY Lua."
-    return call_ai("AUDIO", prompt, instruction)
-
-def run_architect(prompt, context):
-    log_event("🏗️ [WORKER] Building structure...")
-    instruction = (
-        f"You are a Builder. Context: {context}. "
-        "Build using Instance.new('Part'). Group into a Model. Return ONLY Lua."
-    )
-    return call_ai("WORKER", prompt, instruction)
-
-# --- BOSS REVIEW ---
+# --- TRUE DEEP THINK (Critique -> Fix) ---
 def run_boss_review(code, prompt):
-    log_event("🧐 [DIRECTOR] Reviewing code...")
-    critique = call_ai("DIRECTOR", 
-        f"Review this code:\n{code}\nRequest: {prompt}", 
-        "Strict Code Reviewer. Reply 'PERFECT' or list errors."
+    log_event(f"🧐 [DIRECTOR] Analyzing code structure...")
+    
+    # Step 1: Critique
+    critique_inst = (
+        "You are a Senior Code Director. Look at this Lua code. "
+        "Does it have syntax errors, logic flaws, or deprecated methods? "
+        "If it is perfect, reply ONLY: 'PERFECT'. "
+        "If it has errors, list them."
     )
-    
-    if "PERFECT" not in critique.upper():
-        log_event("🔧 [DIRECTOR] Fixing issues...")
-        return call_ai("DIRECTOR", f"Fix these errors:\n{critique}\n\nCode:\n{code}", "Fix the code. Return ONLY Lua.")
-    
-    log_event("✅ [DIRECTOR] Approved.")
-    return code
+    critique = call_ai("DIRECTOR", f"Request: {prompt}\nCode:\n{code}", critique_inst)
 
-# --- WEB SERVER (The User's UI) ---
+    if critique and "PERFECT" in critique.upper():
+        log_event("✅ [DIRECTOR] Code is Flawless.")
+        return code
+    
+    # Step 2: Fix
+    log_event(f"🔧 [DIRECTOR] Fixing issues found...")
+    fix_inst = (
+        f"You are the Director. Fix these specific errors:\n{critique}\n"
+        "Return ONLY the corrected Lua code."
+    )
+    return call_ai("DIRECTOR", f"Original Code:\n{code}", fix_inst)
+
+# --- WEB SERVER ---
 code_queue = []
 
 @app.route('/')
@@ -158,6 +138,7 @@ def home():
                 --secondary-glow: rgba(112, 0, 255, 0.4);
                 --text: #ffffff;
                 --text-dim: #8888aa;
+                --code-bg: #08080c;
             }
 
             * { box-sizing: border-box; margin: 0; padding: 0; outline: none; }
@@ -166,24 +147,22 @@ def home():
                 background: var(--bg);
                 color: var(--text);
                 font-family: 'Outfit', sans-serif;
-                height: 100vh;
+                min-height: 100vh;
                 display: flex;
                 justify-content: center;
                 align-items: center;
-                overflow: hidden;
+                overflow-x: hidden;
                 position: relative;
+                padding: 20px;
             }
 
-            /* --- ANIMATED BACKGROUND --- */
             .orb { position: absolute; border-radius: 50%; filter: blur(100px); opacity: 0.4; z-index: -1; animation: float 10s infinite alternate ease-in-out; }
             .orb-1 { width: 500px; height: 500px; background: var(--secondary); top: -10%; left: -10%; }
             .orb-2 { width: 400px; height: 400px; background: var(--primary); bottom: -10%; right: -10%; animation-delay: 2s; }
             @keyframes float { 0% { transform: translate(0,0); } 100% { transform: translate(30px, 30px); } }
 
-            /* --- MAIN CARD --- */
             .interface {
-                width: 90%;
-                max-width: 480px;
+                width: 100%; max-width: 550px;
                 background: var(--card-bg);
                 backdrop-filter: blur(24px);
                 -webkit-backdrop-filter: blur(24px);
@@ -191,48 +170,27 @@ def home():
                 border-radius: 24px;
                 padding: 40px;
                 box-shadow: 0 20px 50px rgba(0,0,0,0.4);
-                transform: translateY(20px);
-                opacity: 0;
-                animation: slideUp 0.8s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+                transition: transform 0.3s;
             }
 
-            @keyframes slideUp { to { transform: translateY(0); opacity: 1; } }
-
-            /* --- HEADER --- */
             h1 {
-                font-size: 24px;
-                font-weight: 700;
-                margin-bottom: 8px;
-                letter-spacing: -0.5px;
-                background: linear-gradient(135deg, #fff 0%, #aaa 100%);
-                -webkit-background-clip: text;
-                -webkit-text-fill-color: transparent;
-                display: flex;
-                align-items: center;
-                gap: 12px;
+                font-size: 24px; font-weight: 700; margin-bottom: 8px; letter-spacing: -0.5px;
+                background: linear-gradient(135deg, #fff 0%, #aaa 100%); -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+                display: flex; align-items: center; gap: 12px;
             }
             .status-indicator { width: 8px; height: 8px; background: var(--primary); border-radius: 50%; box-shadow: 0 0 10px var(--primary); animation: pulse 2s infinite; }
             @keyframes pulse { 0% { opacity: 1; } 50% { opacity: 0.5; } 100% { opacity: 1; } }
             
             p.subtitle { color: var(--text-dim); font-size: 14px; margin-bottom: 32px; font-weight: 300; }
 
-            /* --- INPUT --- */
             .input-wrapper { position: relative; margin-bottom: 24px; }
             input[type="text"] {
-                width: 100%;
-                background: rgba(0,0,0,0.3);
-                border: 2px solid var(--glass-border);
-                padding: 18px;
-                border-radius: 16px;
-                color: #fff;
-                font-size: 16px;
-                font-family: 'Outfit', sans-serif;
-                transition: all 0.3s ease;
+                width: 100%; background: rgba(0,0,0,0.3); border: 2px solid var(--glass-border); padding: 18px;
+                border-radius: 16px; color: #fff; font-size: 16px; font-family: 'Outfit', sans-serif; transition: all 0.3s ease;
             }
             input:focus { border-color: var(--primary); box-shadow: 0 0 20px var(--primary-glow); transform: translateY(-2px); }
             input::placeholder { color: rgba(255,255,255,0.2); }
 
-            /* --- TOGGLE --- */
             .controls { display: flex; align-items: center; justify-content: space-between; margin-bottom: 30px; background: rgba(255,255,255,0.03); padding: 12px 16px; border-radius: 14px; border: 1px solid var(--glass-border); }
             .label-group { display: flex; flex-direction: column; }
             .label-title { font-size: 14px; font-weight: 500; color: #fff; }
@@ -242,22 +200,14 @@ def home():
             .switch input { opacity: 0; width: 0; height: 0; }
             .slider { position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0; background-color: #333; transition: .4s; border-radius: 34px; }
             .slider:before { position: absolute; content: ""; height: 20px; width: 20px; left: 4px; bottom: 4px; background-color: white; transition: .4s; border-radius: 50%; box-shadow: 0 2px 5px rgba(0,0,0,0.3); }
-            
             input:checked + .slider { background-color: var(--secondary); }
             input:checked + .slider:before { transform: translateX(22px); }
             input:checked ~ .slider { box-shadow: 0 0 15px var(--secondary-glow); }
 
-            /* --- BUTTON --- */
             button {
-                width: 100%;
-                padding: 18px;
-                border: none;
-                border-radius: 16px;
+                width: 100%; padding: 18px; border: none; border-radius: 16px;
                 background: linear-gradient(135deg, var(--primary) 0%, #00c2bb 100%);
-                color: #000;
-                font-size: 16px;
-                font-weight: 700;
-                cursor: pointer;
+                color: #000; font-size: 16px; font-weight: 700; cursor: pointer;
                 transition: all 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
                 box-shadow: 0 10px 20px rgba(0, 242, 234, 0.2);
             }
@@ -265,33 +215,27 @@ def home():
             button:active { transform: scale(0.95); }
             button.loading { background: #333; color: #666; cursor: not-allowed; pointer-events: none; box-shadow: none; }
 
-            /* --- CONSOLE --- */
             .console-window {
-                margin-top: 30px;
-                background: #08080c;
-                border-radius: 12px;
-                padding: 15px;
-                height: 160px;
-                overflow-y: auto;
-                font-family: 'JetBrains Mono', monospace;
-                font-size: 12px;
-                border: 1px solid var(--glass-border);
-                position: relative;
+                margin-top: 30px; background: var(--code-bg); border-radius: 12px; padding: 15px; height: 160px;
+                overflow-y: auto; font-family: 'JetBrains Mono', monospace; font-size: 12px;
+                border: 1px solid var(--glass-border); position: relative;
             }
             .console-window::-webkit-scrollbar { width: 5px; }
             .console-window::-webkit-scrollbar-thumb { background: #333; border-radius: 10px; }
             
-            .log-entry { 
-                margin-bottom: 6px; 
-                opacity: 0; 
-                animation: fadeIn 0.3s forwards; 
-                display: flex;
-                gap: 8px;
-            }
-            .log-time { color: #555; }
+            .log-entry { margin-bottom: 6px; display: flex; gap: 8px; }
             .log-msg { color: #aaa; }
-            .log-highlight { color: var(--primary); font-weight: bold; }
-            @keyframes fadeIn { to { opacity: 1; transform: translateY(0); } from { opacity: 0; transform: translateY(5px); } }
+
+            .code-panel {
+                margin-top: 20px; background: var(--code-bg); border: 1px solid var(--primary); border-radius: 12px; padding: 20px;
+                display: none; animation: slideUp 0.5s ease; position: relative; box-shadow: 0 0 30px rgba(0, 242, 234, 0.1);
+            }
+            .code-header { display: flex; justify-content: space-between; margin-bottom: 10px; color: var(--primary); font-size: 14px; font-weight: bold; text-transform: uppercase; }
+            pre { margin: 0; white-space: pre-wrap; font-family: 'JetBrains Mono', monospace; font-size: 12px; color: #aaffaa; max-height: 300px; overflow-y: auto; }
+            .copy-btn { position: absolute; top: 15px; right: 15px; width: auto; padding: 5px 12px; background: rgba(255,255,255,0.1); border-radius: 6px; font-size: 11px; color: white; border: 1px solid rgba(255,255,255,0.2); }
+            .copy-btn:hover { background: rgba(255,255,255,0.2); transform: none; box-shadow: none; }
+
+            @keyframes slideUp { from { opacity: 0; transform: translateY(20px); } to { opacity: 1; transform: translateY(0); } }
 
         </style>
     </head>
@@ -302,7 +246,7 @@ def home():
 
         <div class="interface">
             <h1><div class="status-indicator"></div> Neural Architect 3.0</h1>
-            <p class="subtitle">Powered by Gemini 3.0 & 2.5 Swarm</p>
+            <p class="subtitle">Powered by Gemini Swarm (8-Core)</p>
 
             <div class="input-wrapper">
                 <input type="text" id="prompt" placeholder="Describe your build..." autocomplete="off">
@@ -322,21 +266,22 @@ def home():
             <button id="genBtn" onclick="send()">Initialize Generation</button>
 
             <div class="console-window" id="console">
-                <div class="log-entry"><span class="log-time">[SYS]</span> <span class="log-msg">Ready for input...</span></div>
+                <div class="log-entry"><span class="log-msg">System Ready...</span></div>
+            </div>
+
+            <div class="code-panel" id="codePanel">
+                <div class="code-header">
+                    <span>Generated Lua Source</span>
+                    <button class="copy-btn" onclick="copyCode()">COPY</button>
+                </div>
+                <pre id="codeContent"></pre>
             </div>
         </div>
 
         <script>
-            function log(txt, highlight=false) { 
+            function log(txt) { 
                 let c = document.getElementById("console");
-                let time = new Date().toLocaleTimeString([], {hour12: false, hour: '2-digit', minute:'2-digit', second:'2-digit'});
-                let cls = highlight ? "log-highlight" : "log-msg";
-                
-                let html = `<div class="log-entry">
-                    <span class="log-time">[${time}]</span> 
-                    <span class="${cls}">${txt}</span>
-                </div>`;
-                
+                let html = `<div class="log-entry"><span class="log-msg">${txt}</span></div>`;
                 c.innerHTML += html;
                 c.scrollTop = c.scrollHeight;
             }
@@ -349,7 +294,7 @@ def home():
                 if(check) {
                     card.style.boxShadow = "0 20px 60px rgba(112, 0, 255, 0.3)";
                     card.style.borderColor = "rgba(112, 0, 255, 0.3)";
-                    desc.innerText = "Boss Mode (Gemini 3.0) Active";
+                    desc.innerText = "Director Mode (Gemini 3.0) Active";
                     desc.style.color = "#d4b3ff";
                 } else {
                     card.style.boxShadow = "0 20px 50px rgba(0,0,0,0.4)";
@@ -364,22 +309,18 @@ def home():
                 let dt = document.getElementById("deepThink").checked;
                 let btn = document.getElementById("genBtn");
                 
-                if(!p.value) {
-                    p.style.borderColor = "#ff0055";
-                    setTimeout(() => p.style.borderColor = "rgba(255,255,255,0.08)", 500);
-                    return;
-                }
+                if(!p.value) return;
 
                 btn.innerText = "Processing...";
                 btn.classList.add("loading");
-                log("Assigning Agents...", true);
+                document.getElementById("codePanel").style.display = "none";
+                document.getElementById("codeContent").innerText = "";
                 
                 fetch("/process", {
                     method: "POST",
                     headers: {"Content-Type": "application/json"},
                     body: JSON.stringify({prompt: p.value, deep_think: dt})
                 }).then(r => {
-                    log("Request Queued.");
                     p.value = "";
                     setTimeout(() => {
                         btn.innerText = "Initialize Generation";
@@ -388,10 +329,30 @@ def home():
                 });
             }
 
-            // Status Loop
+            function copyCode() {
+                let text = document.getElementById("codeContent").innerText;
+                navigator.clipboard.writeText(text);
+                alert("Copied!");
+            }
+
             setInterval(() => {
                 fetch("/status").then(r=>r.json()).then(d => {
-                    if(d.logs.length > 0) d.logs.forEach(l => log(l, true));
+                    if(d.logs.length > 0) {
+                        let c = document.getElementById("console");
+                        c.innerHTML = "";
+                        d.logs.forEach(l => {
+                            c.innerHTML += `<div class="log-entry"><span class="log-msg">${l}</span></div>`;
+                        });
+                        c.scrollTop = c.scrollHeight;
+                    }
+
+                    if(d.final_code && !d.is_processing) {
+                        let panel = document.getElementById("codePanel");
+                        if(panel.style.display === "none" || panel.style.display === "") {
+                            document.getElementById("codeContent").innerText = d.final_code;
+                            panel.style.display = "block";
+                        }
+                    }
                 });
             }, 1000);
         </script>
@@ -404,53 +365,60 @@ def process():
     data = request.json
     prompt = data.get('prompt')
     deep_think = data.get('deep_think', False)
+    
     current_status["logs"] = []
+    current_status["final_code"] = None
+    current_status["is_processing"] = True
 
     def task():
+        log_event(f"🚀 Job Started: {prompt}")
         final_code = ""
-        context_data = ""
-        
+        context = ""
+
         # 1. SCOUT
         plan = run_router(prompt)
         
         # 2. SEARCH
         if plan.get("needs_search"):
-            context_data = run_searcher(prompt)
+            context = call_ai("SEARCH", prompt, "You are a Research Engine. Brief technical facts.")
+            log_event(f"🌍 Context Found: {len(context)} chars")
 
-        # 3. SPECIALISTS
+        # 3. BUILD
         if plan.get("needs_physics"):
-            final_code += f"\n-- [PHYSICS]\n{run_robotics_engineer(prompt, context_data)}\n"
+            final_code += f"\n--[PHYSICS]\n{run_specialist('ROBOTICS', 'Robotics-ER', prompt, context)}\n"
         elif plan.get("needs_build"):
-            final_code += f"\n-- [BUILD]\n{run_architect(prompt, context_data)}\n"
+            final_code += f"\n--[BUILD]\n{run_specialist('WORKER', 'Architect', prompt, context)}\n"
 
+        # 4. EXTRAS
         if plan.get("needs_lore"):
-            final_code += f"\n-- [LORE]\n{run_creative_writer(prompt)}\n"
+            final_code += f"\n--[LORE]\n{run_specialist('CREATIVE', 'Gemma', prompt)}\n"
         
         if plan.get("needs_dialog"):
-            final_code += f"\n-- [DIALOGUE]\n{run_dialogue_coach(prompt)}\n"
-
+            final_code += f"\n--[DIALOG]\n{run_specialist('DIALOG', 'Dialog-Coach', prompt)}\n"
+            
         if plan.get("needs_sound"):
-            final_code += f"\n-- [AUDIO]\n{run_audio_engineer(prompt)}\n"
+            final_code += f"\n--[SOUND]\n{run_specialist('AUDIO', 'Audio-Eng', prompt)}\n"
+        
+        # 5. LOGIC
+        final_code += f"\n--[LOGIC]\n{run_specialist('WORKER', 'Scripter', prompt, f'Context: {context}. Object built.')}\n"
 
-        # 4. GENERAL LOGIC
-        final_code += f"\n-- [LOGIC]\n{call_ai('WORKER', prompt, f'Main Script. Context: {context_data}. Object built.')}\n"
-
-        # 5. BOSS REVIEW
+        # 6. BOSS REVIEW
         if deep_think:
             final_code = run_boss_review(final_code, prompt)
+
+        clean_code = final_code.replace("```lua", "").replace("```", "")
+        code_queue.append(clean_code)
         
-        clean = final_code.replace("```lua", "").replace("```", "")
-        code_queue.append(clean)
-        log_event("✨ Sequence Complete.")
+        current_status["final_code"] = clean_code
+        current_status["is_processing"] = False
+        log_event("✅ DONE. Code available.")
 
     threading.Thread(target=task).start()
     return jsonify({"success": True})
 
 @app.route('/status')
 def status():
-    l = list(current_status["logs"])
-    current_status["logs"] = []
-    return jsonify({"logs": l})
+    return jsonify(current_status)
 
 @app.route('/get_latest_code', methods=['GET'])
 def get_code():
