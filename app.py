@@ -11,7 +11,7 @@ GEMINI_KEY = os.environ.get("GEMINI")
 
 # --- MODEL ROSTER ---
 MODELS = {
-    "BRAIN": "gemini-3-flash",                    # Text Logic
+    "BRAIN": "gemini-3-flash-preview",                    # Text Logic
     "NATIVE_AUDIO": "gemini-2.5-flash-native-audio-dialog", # Voice Logic
     "NEURAL_TTS": "gemini-2.5-flash-tts"          # Fallback TTS
 }
