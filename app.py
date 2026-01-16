@@ -2,16 +2,14 @@ import os
 import requests
 import json
 import threading
+import time
 from flask import Flask, request, jsonify
 
 app = Flask(__name__)
 
 # --- CONFIGURATION ---
-# ONLY ONE KEY NEEDED NOW (The Free One)
 GEMINI_KEY = os.environ.get("GEMINI")
-
-# Use the reliable 1.5 model to ensure it works
-MODEL_ROSTER = ["gemini-1.5-flash", "gemini-2.5-flash", "gemini-1.5-pro"]
+MODEL_ROSTER = ["gemini-1.5-flash", "gemini-2.5-flash"]
 
 # Status Tracking
 current_status = {
@@ -26,62 +24,72 @@ def log_event(text):
     current_status["logs"].append(text)
     current_status["message"] = text
 
-# --- THE MANAGER ---
-def call_gemini_swarm(prompt, system_role):
-    """
-    Uses the free Gemini key for everything.
-    """
+# --- THE CORE AI ENGINE ---
+def call_gemini(prompt, system_role):
     for model in MODEL_ROSTER:
         current_status["active_model"] = model
         url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={GEMINI_KEY}"
-        
-        payload = {
-            "contents": [{ "parts": [{ "text": f"{system_role}\n\nUser Request: {prompt}" }] }]
-        }
-
+        payload = { "contents": [{ "parts": [{ "text": f"{system_role}\n\nTask: {prompt}" }] }] }
         try:
-            response = requests.post(url, json=payload)
-            data = response.json()
-            
-            if "candidates" in data:
-                return data["candidates"][0]["content"]["parts"][0]["text"]
-            
-            if "error" in data:
-                log_event(f"⚠️ {model} Busy/Error. Switching...")
-                continue
-                
-        except:
-            continue
-            
+            r = requests.post(url, json=payload)
+            data = r.json()
+            if "candidates" in data: return data["candidates"][0]["content"]["parts"][0]["text"]
+        except: continue
     return None
 
-# --- THE AGENTS ---
-
-def run_architect(prompt):
-    # THIS IS THE FIX: We tell Gemini to build using PARTS, not meshes.
-    current_status["agent"] = "Architect (Free Mode)"
-    log_event(f"🏗️ Architect is coding the build for: {prompt}...")
+# --- THE SELF-REFLECTION LOOP ---
+def generate_with_reflection(prompt, role, deep_think=False):
+    # 1. First Draft
+    log_event("📝 Generating Initial Draft...")
+    draft_code = call_gemini(prompt, role)
     
+    if not deep_think or not draft_code:
+        return draft_code
+
+    # 2. The Critique (The AI looks at its own work)
+    log_event("🤔 Deep Think: Reviewing code for errors...")
+    critique_prompt = (
+        f"You are a Senior Roblox Code Reviewer. Look at this Lua code:\n\n{draft_code}\n\n"
+        f"The user asked for: '{prompt}'.\n"
+        "Identify any logic errors, missing 'end' statements, or physics issues. "
+        "If the code is 100% perfect, reply ONLY with the word 'PERFECT'. "
+        "If it has issues, describe them briefly."
+    )
+    critique = call_gemini(critique_prompt, "You are a critical code reviewer.")
+
+    if "PERFECT" in critique.upper():
+        log_event("✅ Deep Think: Code looks good!")
+        return draft_code
+    
+    # 3. The Refinement (The AI fixes the mistakes)
+    log_event(f"🔧 Deep Think: Fixing issues found: {critique[:50]}...")
+    fix_prompt = (
+        f"Original Request: {prompt}\n"
+        f"Draft Code: {draft_code}\n"
+        f"Reviewer Feedback: {critique}\n\n"
+        "Rewrite the Lua code completely to fix these issues. Return ONLY the code."
+    )
+    final_code = call_gemini(fix_prompt, role)
+    
+    return final_code
+
+# --- THE AGENTS ---
+def run_architect(prompt, deep_think):
+    current_status["agent"] = "Architect"
     instruction = (
         "You are a Roblox Builder. You cannot upload meshes. "
-        "You must build the requested object by writing Lua code that creates 'Part', 'WedgePart', or 'TrussPart'. "
-        "Use Instance.new('Part'). "
-        "Set the Size, CFrame (Position/Rotation), Color, and Material for every part. "
-        "Group all parts into a Model folder. "
-        "Example: Make a chair -> Create 4 legs and a seat using Parts."
-        "Return ONLY Lua code."
+        "Build the requested object using ONLY Instance.new('Part'). "
+        "Set Size, Position, Color, Anchored = true. Group into a Model. Return ONLY Lua."
     )
-    return call_gemini_swarm(prompt, instruction)
+    return generate_with_reflection(prompt, instruction, deep_think)
 
-def run_scripter(prompt, context):
+def run_scripter(prompt, context, deep_think):
     current_status["agent"] = "Scripter"
-    log_event("👨‍💻 Scripter is writing logic...")
     instruction = (
-        "You are a Roblox Scripter. Write valid Lua code. "
-        "If an object was just built, write a script to make it interactive. "
-        f"Context: {context}"
+        f"You are a Roblox Scripter. Write valid Lua code. Context: {context}. "
+        "Ensure all variables are defined. Return ONLY Lua."
     )
-    return call_gemini_swarm(prompt, instruction)
+    return generate_with_reflection(prompt, instruction, deep_think)
 
 # --- WEB SERVER ---
 code_queue = []
@@ -92,37 +100,83 @@ def home():
     <!DOCTYPE html>
     <html lang="en">
     <head>
-        <title>Free AI Builder</title>
+        <title>AI Architect Pro</title>
         <meta name="viewport" content="width=device-width, initial-scale=1">
+        <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;700&display=swap" rel="stylesheet">
         <style>
-            body { background: #1a1a1a; color: white; font-family: sans-serif; padding: 20px; text-align: center; }
-            input { width: 80%; padding: 15px; border-radius: 5px; border: none; margin-top: 20px; }
-            button { padding: 15px 30px; background: #007bff; color: white; border: none; border-radius: 5px; margin-top: 10px; cursor: pointer; }
-            #console { background: black; padding: 15px; text-align: left; height: 200px; overflow-y: scroll; margin-top: 20px; font-family: monospace; color: #0f0; }
+            :root { --accent: #00ff88; --bg: #0f0f0f; --panel: #1e1e1e; }
+            body { background: var(--bg); color: white; font-family: 'Inter', sans-serif; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; }
+            .container { width: 400px; background: var(--panel); padding: 30px; border-radius: 20px; box-shadow: 0 10px 40px rgba(0,0,0,0.5); border: 1px solid #333; }
+            h1 { font-size: 20px; margin-bottom: 20px; display: flex; align-items: center; gap: 10px; }
+            .status-dot { width: 10px; height: 10px; background: var(--accent); border-radius: 50%; box-shadow: 0 0 10px var(--accent); }
+            
+            /* Input Area */
+            input[type="text"] { width: 100%; padding: 15px; background: #000; border: 1px solid #333; color: white; border-radius: 10px; box-sizing: border-box; font-size: 16px; outline: none; transition: 0.3s; }
+            input[type="text"]:focus { border-color: var(--accent); }
+
+            /* Toggle Switch */
+            .toggle-container { display: flex; align-items: center; justify-content: space-between; margin: 20px 0; background: #252525; padding: 10px 15px; border-radius: 10px; }
+            .switch { position: relative; display: inline-block; width: 50px; height: 26px; }
+            .switch input { opacity: 0; width: 0; height: 0; }
+            .slider { position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0; background-color: #444; transition: .4s; border-radius: 34px; }
+            .slider:before { position: absolute; content: ""; height: 20px; width: 20px; left: 3px; bottom: 3px; background-color: white; transition: .4s; border-radius: 50%; }
+            input:checked + .slider { background-color: var(--accent); }
+            input:checked + .slider:before { transform: translateX(24px); }
+            .label-text { font-size: 14px; color: #ccc; }
+
+            /* Console */
+            #console { height: 150px; overflow-y: auto; font-family: monospace; font-size: 12px; color: #888; margin-top: 20px; border-top: 1px solid #333; padding-top: 10px; }
+            .log-new { color: var(--accent); }
+
+            button { width: 100%; padding: 15px; background: linear-gradient(135deg, var(--accent), #00cc6a); border: none; border-radius: 10px; color: black; font-weight: bold; cursor: pointer; margin-top: 10px; font-size: 16px; }
+            button:active { transform: scale(0.98); }
         </style>
     </head>
     <body>
-        <h1>Roblox AI (Free Mode)</h1>
-        <div id="console">System Ready...</div>
-        <input type="text" id="prompt" placeholder="E.g., Build a glowing blue tree">
-        <button onclick="send()">Build It</button>
+        <div class="container">
+            <h1><div class="status-dot"></div> Roblox Architect</h1>
+            
+            <input type="text" id="prompt" placeholder="Describe your build...">
+            
+            <div class="toggle-container">
+                <span class="label-text">🧠 Deep Think (Self-Correction)</span>
+                <label class="switch">
+                    <input type="checkbox" id="deepThink">
+                    <span class="slider"></span>
+                </label>
+            </div>
+
+            <button onclick="send()">Generate</button>
+            <div id="console">System Ready...</div>
+        </div>
+
         <script>
-            function log(txt) { document.getElementById("console").innerHTML += "<div>> "+txt+"</div>"; }
+            function log(txt) { 
+                let c = document.getElementById("console");
+                c.innerHTML += `<div class="log-new">> ${txt}</div>`;
+                c.scrollTop = c.scrollHeight;
+            }
+
             function send() {
                 let p = document.getElementById("prompt").value;
-                log("Sending: " + p);
+                let dt = document.getElementById("deepThink").checked;
+                if(!p) return;
+                
+                log(dt ? "Sending (Deep Think ON)..." : "Sending (Fast Mode)...");
+                
                 fetch("/process", {
-                    method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({prompt: p})
+                    method: "POST",
+                    headers: {"Content-Type": "application/json"},
+                    body: JSON.stringify({prompt: p, deep_think: dt})
                 });
                 document.getElementById("prompt").value = "";
             }
+
             setInterval(() => {
                 fetch("/status").then(r=>r.json()).then(d => {
-                    if(d.logs.length > 0) {
-                        d.logs.forEach(l => log(l));
-                    }
+                    if(d.logs.length > 0) d.logs.forEach(l => log(l));
                 });
-            }, 2000);
+            }, 1000);
         </script>
     </body>
     </html>
@@ -130,32 +184,33 @@ def home():
 
 @app.route('/process', methods=['POST'])
 def process():
-    prompt = request.json.get('prompt')
+    data = request.json
+    prompt = data.get('prompt')
+    deep_think = data.get('deep_think', False) # Read the switch
     current_status["logs"] = []
-    
+
     def task():
-        # 1. Build it (Using pure code)
-        build_code = run_architect(prompt)
-        
-        # 2. Script it (Add logic)
-        script_code = run_scripter(prompt, context="Object is built.")
+        # 1. Build
+        build_code = run_architect(prompt, deep_think)
+        # 2. Script
+        script_code = run_scripter(prompt, "Object is built.", deep_think)
         
         final = ""
-        if build_code: final += f"\n-- BUILD --\n{build_code}\n"
-        if script_code: final += f"\n-- SCRIPT --\n{script_code}\n"
+        if build_code: final += f"\n{build_code}\n"
+        if script_code: final += f"\n{script_code}\n"
         
-        clean_final = final.replace("```lua", "").replace("```", "")
-        code_queue.append(clean_final)
-        log_event("✅ Done! Check Roblox.")
+        clean = final.replace("```lua", "").replace("```", "")
+        code_queue.append(clean)
+        log_event("✨ Process Complete.")
 
     threading.Thread(target=task).start()
-    return jsonify({"status": "ok"})
+    return jsonify({"success": True})
 
 @app.route('/status')
 def status():
-    logs = list(current_status["logs"])
-    current_status["logs"] = [] # Clear sent logs
-    return jsonify({"logs": logs})
+    l = list(current_status["logs"])
+    current_status["logs"] = []
+    return jsonify({"logs": l})
 
 @app.route('/get_latest_code', methods=['GET'])
 def get_code():
