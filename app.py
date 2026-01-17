@@ -17,9 +17,11 @@ sock = Sock(app)
 GEMINI_KEY = os.environ.get("GEMINI")
 
 # --- MODEL CHAINS (Restored) ---
+# The system tries the top model. If it fails, it tries the next.
 MODEL_CHAINS = {
     "GEMINI": [
         "gemini-3-flash-preview", 
+        "gemini-2.0-flash-exp",
         "gemini-2.5-flash",
         "gemini-2.5-flash-lite"
     ],
@@ -31,8 +33,7 @@ MODEL_CHAINS = {
     ],
     "DIRECTOR": [
         "gemini-3-flash-preview",
-        "gemini-2.5-flash",
-        "gemini-2.5-flash-lite"
+        "gemini-2.0-flash-exp"
     ],
     # Voice models
     "NATIVE_AUDIO": "gemini-2.5-flash-native-audio-dialog", 
@@ -89,42 +90,79 @@ def call_ai_text(model_id, prompt, image_data=None, deep_think=False):
     
     return try_model_chain(chain_key, payload)
 
-# --- WEBSOCKET LIVE CALL (Fixed Audio) ---
+# --- HELPER: TTS GENERATION ---
+@app.route('/generate_tts', methods=['POST'])
+def generate_tts():
+    text = request.json.get('text')
+    if not text: return jsonify({"error": "No text"}), 400
+
+    # Uses the Neural TTS model
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/{MODEL_CHAINS['NEURAL_TTS']}:generateContent?key={GEMINI_KEY}"
+    payload = { "contents": [{ "parts": [{ "text": text }] }] }
+    
+    try:
+        r = requests.post(url, json=payload)
+        data = r.json()
+        if "candidates" in data:
+            for part in data["candidates"][0]["content"]["parts"]:
+                if "inline_data" in part:
+                    return jsonify({"audio": part["inline_data"]["data"]})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+    
+    return jsonify({"error": "Failed"}), 500
+
+# --- WEBSOCKET LIVE CALL ---
 @sock.route('/ws/live')
 def live_socket(ws):
     client = genai.Client(api_key=GEMINI_KEY, http_options={'api_version': 'v1alpha'})
     
     config = types.LiveConnectConfig(
         response_modalities=["AUDIO"], 
+        output_audio_transcription=types.AudioTranscriptionConfig()
     )
     
     async def session_loop():
-        async with client.aio.live.connect(model=MODEL_CHAINS["NATIVE_AUDIO"], config=config) as session:
-            
-            async def send_audio():
-                while True:
-                    try:
-                        data = ws.receive()
-                        if not data: break
-                        msg = json.loads(data)
-                        
-                        if "audio" in msg:
-                            # Send raw PCM to Gemini
-                            await session.send(input={"data": msg["audio"], "mime_type": "application/pcm"}, end_of_turn=False)
-                        elif "commit" in msg:
-                            await session.send(input={}, end_of_turn=True)
-                    except: break
+        try:
+            # We use the Native Audio model here
+            async with client.aio.live.connect(model=MODEL_CHAINS["NATIVE_AUDIO"], config=config) as session:
+                print(">> Connected to Gemini Live")
+                
+                async def send_audio():
+                    while True:
+                        try:
+                            # Use executor to make ws.receive non-blocking so it doesn't freeze Flask
+                            data = await asyncio.get_event_loop().run_in_executor(None, ws.receive)
+                            if not data: break
+                            
+                            msg = json.loads(data)
+                            if "audio" in msg:
+                                await session.send(input={"data": msg["audio"], "mime_type": "application/pcm"}, end_of_turn=False)
+                            elif "commit" in msg:
+                                await session.send(input={}, end_of_turn=True)
+                        except: break
 
-            async def receive_response():
-                async for response in session.receive():
-                    if response.server_content and response.server_content.model_turn:
-                        for part in response.server_content.model_turn.parts:
-                            if part.inline_data:
-                                # Send Audio back to browser
-                                b64 = base64.b64encode(part.inline_data.data).decode('utf-8')
-                                ws.send(json.dumps({"audio": b64}))
+                async def receive_response():
+                    while True:
+                        async for response in session.receive():
+                            payload = {}
+                            
+                            # Audio
+                            if response.server_content and response.server_content.model_turn:
+                                for part in response.server_content.model_turn.parts:
+                                    if part.inline_data:
+                                        payload["audio"] = base64.b64encode(part.inline_data.data).decode('utf-8')
+                            
+                            # Text Transcription
+                            if response.server_content and response.server_content.output_transcription:
+                                payload["text"] = response.server_content.output_transcription.text
 
-            await asyncio.gather(send_audio(), receive_response())
+                            if payload:
+                                await asyncio.get_event_loop().run_in_executor(None, ws.send, json.dumps(payload))
+
+                await asyncio.gather(send_audio(), receive_response())
+        except Exception as e:
+            print(f"WS Error: {e}")
 
     try:
         loop = asyncio.new_event_loop()
@@ -170,7 +208,7 @@ def home():
             .dt-toggle.active .dt-box { background: #ffd700; border-color: #ffd700; color: #000; }
 
             .chat { flex-grow: 1; padding: 20px; overflow-y: auto; display: flex; flex-direction: column; gap: 15px; }
-            .msg { max-width: 85%; padding: 12px 16px; border-radius: 18px; font-size: 15px; line-height: 1.5; word-wrap: break-word; animation: pop 0.2s ease; }
+            .msg { max-width: 85%; padding: 12px 16px; border-radius: 18px; font-size: 15px; line-height: 1.5; word-wrap: break-word; animation: pop 0.2s ease; position: relative; }
             .user { align-self: flex-end; background: linear-gradient(135deg, var(--primary), #00a8a2); color: #000; font-weight: 500; border-bottom-right-radius: 4px; }
             .ai { align-self: flex-start; background: rgba(255,255,255,0.05); border: 1px solid var(--border); border-bottom-left-radius: 4px; }
             .img-prev { max-width: 100%; border-radius: 10px; margin-top: 5px; display: block; }
@@ -179,6 +217,14 @@ def home():
             .ai p { margin: 5px 0; }
             .ai code { background: rgba(0,242,234,0.1); color: var(--primary); padding: 2px 4px; border-radius: 4px; font-family: monospace; }
             .ai pre { background: rgba(0,0,0,0.5); padding: 10px; border-radius: 8px; overflow-x: auto; margin: 10px 0; }
+
+            /* TTS Button */
+            .tts-btn {
+                position: absolute; bottom: -25px; right: 0; background: rgba(255,255,255,0.1); 
+                color: #aaa; border: none; border-radius: 50%; width: 24px; height: 24px;
+                display: flex; align-items: center; justify-content: center; cursor: pointer; font-size: 10px;
+            }
+            .tts-btn:hover { color: var(--primary); background: rgba(0,242,234,0.1); }
 
             .input-area { padding: 15px; background: var(--header); border-top: 1px solid var(--border); display: flex; gap: 10px; align-items: flex-end; padding-bottom: max(15px, env(safe-area-inset-bottom)); }
             .txt-box { flex-grow: 1; position: relative; }
@@ -192,6 +238,7 @@ def home():
             /* LIVE CALL MODAL */
             .call-modal { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(5,5,8,0.95); z-index: 100; display: none; flex-direction: column; align-items: center; justify-content: center; backdrop-filter: blur(10px); }
             .call-status { font-size: 24px; font-weight: 700; color: #fff; margin-bottom: 10px; }
+            .call-subtitle { font-size: 14px; color: #aaa; margin-bottom: 30px; text-align: center; max-width: 80%; }
             .call-visualizer { display: flex; gap: 5px; height: 50px; align-items: center; margin-bottom: 40px; }
             .bar { width: 6px; background: var(--primary); border-radius: 3px; animation: wave 1s infinite ease-in-out; height: 10px; }
             @keyframes wave { 0%, 100% { height: 10px; opacity: 0.5; } 50% { height: 40px; opacity: 1; } }
@@ -243,8 +290,10 @@ def home():
             <button class="icon-btn send-btn" onclick="sendText()"><i class="fa-solid fa-arrow-up"></i></button>
         </div>
 
+        <!-- LIVE CALL MODAL -->
         <div class="call-modal" id="callModal">
             <div class="call-status" id="callStatus">Connecting...</div>
+            <div class="call-subtitle" id="callSub"></div>
             <div class="call-visualizer">
                 <div class="bar" style="animation-delay:0s"></div><div class="bar" style="animation-delay:0.1s"></div>
                 <div class="bar" style="animation-delay:0.2s"></div><div class="bar" style="animation-delay:0.3s"></div>
@@ -254,6 +303,8 @@ def home():
                 <button class="call-btn end-btn" onclick="endCall()"><i class="fa-solid fa-phone-slash"></i></button>
             </div>
         </div>
+
+        <audio id="audioPlayer" style="display:none"></audio>
 
         <script>
             let currMod = 'GEMINI';
@@ -277,13 +328,40 @@ def home():
                 document.getElementById('dtCheck').style.display = dtEnabled ? 'block' : 'none';
             }
 
-            function addMsg(txt, type, isHtml=false) {
+            function addMsg(txt, type, isHtml=false, isLive=false) {
                 let d = document.createElement("div");
                 d.className = "msg " + type;
-                if(isHtml) d.innerHTML = txt; else d.innerText = txt;
+                
+                // Add content
+                let contentDiv = document.createElement("div");
+                if(isHtml) contentDiv.innerHTML = txt; else contentDiv.innerText = txt;
+                d.appendChild(contentDiv);
+
+                // Add TTS Button for AI messages
+                if (type === "ai" && !isLive) {
+                    let btn = document.createElement("button");
+                    btn.className = "tts-btn";
+                    btn.innerHTML = '<i class="fa-solid fa-volume-high"></i>';
+                    btn.onclick = () => playTTS(contentDiv.innerText);
+                    d.appendChild(btn);
+                }
+
                 let c = document.getElementById("chat");
                 c.appendChild(d);
                 c.scrollTop = c.scrollHeight;
+            }
+
+            function playTTS(text) {
+                fetch("/generate_tts", {
+                    method: "POST", headers: {"Content-Type": "application/json"},
+                    body: JSON.stringify({text: text})
+                }).then(r=>r.json()).then(d => {
+                    if(d.audio) {
+                        let aud = document.getElementById("audioPlayer");
+                        aud.src = "data:audio/mp3;base64," + d.audio;
+                        aud.play();
+                    }
+                });
             }
 
             const txtIn = document.getElementById("prompt");
@@ -324,19 +402,14 @@ def home():
                 document.getElementById('callStatus').innerText = "Connecting...";
                 
                 try {
-                    // Audio Context for Playback
                     audioContext = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 24000 });
-
-                    // Mic Stream
                     const stream = await navigator.mediaDevices.getUserMedia({ audio: { sampleRate: 16000, channelCount: 1 } });
                     
-                    // WebSocket
                     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
                     ws = new WebSocket(`${protocol}//${window.location.host}/ws/live`);
                     
                     ws.onopen = () => {
                         document.getElementById('callStatus').innerText = "Live";
-                        // Start Recording Loop
                         mediaRecorder = new MediaRecorder(stream, { mimeType: 'audio/webm' });
                         mediaRecorder.ondataavailable = (e) => {
                             if (e.data.size > 0 && ws.readyState === WebSocket.OPEN) {
@@ -348,14 +421,13 @@ def home():
                                 reader.readAsDataURL(e.data);
                             }
                         };
-                        mediaRecorder.start(100); // 100ms chunks
+                        mediaRecorder.start(100); 
                     };
 
                     ws.onmessage = async (event) => {
                         const data = JSON.parse(event.data);
-                        if(data.audio) {
-                            playPCM(data.audio);
-                        }
+                        if(data.audio) playPCM(data.audio);
+                        if(data.text) document.getElementById('callSub').innerText = data.text;
                     };
 
                     ws.onclose = () => endCall();
@@ -367,20 +439,14 @@ def home():
             }
 
             function playPCM(b64) {
-                // Decode Base64
                 const binaryString = window.atob(b64);
                 const len = binaryString.length;
                 const bytes = new Uint8Array(len);
-                for (let i = 0; i < len; i++) {
-                    bytes[i] = binaryString.charCodeAt(i);
-                }
+                for (let i = 0; i < len; i++) bytes[i] = binaryString.charCodeAt(i);
                 
-                // Convert PCM to AudioBuffer
                 const int16 = new Int16Array(bytes.buffer);
                 const float32 = new Float32Array(int16.length);
-                for (let i = 0; i < int16.length; i++) {
-                    float32[i] = int16[i] / 32768; // Normalize
-                }
+                for (let i = 0; i < int16.length; i++) float32[i] = int16[i] / 32768;
 
                 const buffer = audioContext.createBuffer(1, float32.length, 24000);
                 buffer.getChannelData(0).set(float32);
@@ -392,15 +458,11 @@ def home():
             function schedulePlayback() {
                 if (isPlaying || audioQueue.length === 0) return;
                 isPlaying = true;
-
                 const buffer = audioQueue.shift();
                 const source = audioContext.createBufferSource();
                 source.buffer = buffer;
                 source.connect(audioContext.destination);
-                source.onended = () => {
-                    isPlaying = false;
-                    schedulePlayback();
-                };
+                source.onended = () => { isPlaying = false; schedulePlayback(); };
                 source.start();
             }
 
