@@ -4,3 +4,4 @@ google-genai
 markdown2
 requests
 gunicorn
+numpy
