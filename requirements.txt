@@ -2,6 +2,7 @@ flask
 flask-sock
 google-genai
 markdown2
+numpy
 requests
 gunicorn
-numpy
+gTTS
