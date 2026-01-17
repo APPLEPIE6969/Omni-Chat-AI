@@ -10,22 +10,23 @@ app = Flask(__name__)
 # --- CONFIGURATION ---
 GEMINI_KEY = os.environ.get("GEMINI")
 
-# --- MODEL CHAINS (Your Exact Selection + Your Requested Fallbacks) ---
+# --- MODEL CHAINS (The Fallback System) ---
+# It tries the top model. If it fails, it tries the next one down.
 MODEL_CHAINS = {
     "GEMINI": [
-        "gemini-3-flash-preview",  # Your requested main model
-        "gemini-2.5-flash",        # Your requested fallback
-        "gemini-2.5-flash-lite"    # Your requested fallback
+        "gemini-3-flash-preview",  # Main
+        "gemini-2.5-flash",        # Fallback 1
+        "gemini-2.5-flash-lite"    # Fallback 2
     ],
     "GEMMA": [
-        "gemma-3-27b-it",          # Your requested main model
-        "gemma-3-12b-it",          # Fallbacks you requested...
+        "gemma-3-27b-it",          # Main
+        "gemma-3-12b-it",          # Fallbacks...
         "gemma-3-4b-it",
         "gemma-3-2b-it",
         "gemma-3-1b-it"
     ],
     "DIRECTOR": [
-        "gemini-3-flash-preview",
+        "gemini-3-flash-preview",  # Smartest for review
         "gemini-2.5-flash"
     ],
     "NATIVE_AUDIO": ["gemini-2.5-flash-native-audio-dialog"],
@@ -34,8 +35,7 @@ MODEL_CHAINS = {
 
 # --- MARKDOWN PARSING ---
 def parse_markdown(text):
-    """Convert markdown text to HTML"""
-    extras = ["tables", "code-friendly", "fenced-code-blocks", "strike", "footnotes", "header-ids", "toc", "spoiler", "smarty-pants", "link-patterns"]
+    extras = ["tables", "fenced-code-blocks", "strike", "spoiler", "break-on-newline", "link-patterns"]
     try:
         return markdown2.markdown(text, extras=extras)
     except:
@@ -43,7 +43,7 @@ def parse_markdown(text):
 
 # --- HELPER: ROBUST REQUEST ---
 def try_model_chain(chain_key, payload):
-    """Iterates through your list of models until one succeeds"""
+    """Loops through the list of models until one works"""
     models = MODEL_CHAINS.get(chain_key, MODEL_CHAINS["GEMINI"])
     last_error = "No models available"
 
@@ -52,15 +52,18 @@ def try_model_chain(chain_key, payload):
         try:
             r = requests.post(url, json=payload)
             
+            # Check for standard HTTP errors
             if r.status_code != 200:
-                print(f"⚠️ {model} Failed ({r.status_code}). Switching to next...")
+                print(f"⚠️ {model} Failed ({r.status_code}). Switching...")
                 continue
             
+            # Check for API errors (e.g., overloaded)
             data = r.json()
             if "error" in data:
                 print(f"⚠️ {model} API Error. Switching...")
                 continue
-                
+            
+            # Success
             if "candidates" in data and len(data["candidates"]) > 0:
                 return data["candidates"][0]["content"]["parts"][0]["text"]
                 
@@ -68,7 +71,7 @@ def try_model_chain(chain_key, payload):
             last_error = str(e)
             continue
 
-    return f"Error: All models in chain {chain_key} failed."
+    return f"Error: All models failed. ({last_error})"
 
 # --- HELPER: TTS ---
 def generate_neural_speech(text):
@@ -88,10 +91,11 @@ def director_review(prompt, initial_response):
     review_prompt = (
         f"User Prompt: {prompt}\n"
         f"AI Draft Response: {initial_response}\n\n"
-        "You are the Director. Review the draft for accuracy, tone, and safety. "
-        "If it's good, return it exactly as is. If it needs improvement, rewrite it better."
+        "You are the Director. Review this for accuracy and tone. "
+        "If it is good, return it exactly as is. If it needs improvement, rewrite it."
     )
     payload = { "contents": [{ "parts": [{ "text": review_prompt }] }] }
+    # Uses the DIRECTOR chain (3-Flash -> 2.5-Flash)
     return try_model_chain("DIRECTOR", payload)
 
 # --- MAIN AI CALLER ---
@@ -99,6 +103,7 @@ def call_ai(mode, model_id=None, prompt=None, audio_data=None, image_data=None, 
     
     # 1. TEXT/IMAGE MODE
     if mode == "text":
+        # Select the Chain (GEMINI or GEMMA)
         chain_key = model_id if model_id in MODEL_CHAINS else "GEMINI"
         
         parts = [{ "text": f"User: {prompt}" }]
@@ -113,6 +118,7 @@ def call_ai(mode, model_id=None, prompt=None, audio_data=None, image_data=None, 
 
         payload = { "contents": [{ "parts": parts }] }
         
+        # Call the chain
         response_text = try_model_chain(chain_key, payload)
         
         if deep_think:
@@ -122,7 +128,7 @@ def call_ai(mode, model_id=None, prompt=None, audio_data=None, image_data=None, 
 
     # 2. VOICE MODE
     if mode == "voice":
-        # Native Audio doesn't support chaining easily due to different return types, mostly single model
+        # Native Audio doesn't support easy fallback chaining (input formats differ), so we use the specific model
         url = f"https://generativelanguage.googleapis.com/v1beta/models/{MODEL_CHAINS['NATIVE_AUDIO'][0]}:generateContent?key={GEMINI_KEY}"
         payload = {
             "contents": [{
@@ -184,20 +190,19 @@ def home():
                 height: 100dvh; display: flex; flex-direction: column; overflow: hidden; position: relative;
             }
 
-            /* --- ANIMATED BACKGROUND --- */
+            /* ANIMATED BACKGROUND */
             .orb { position: absolute; border-radius: 50%; filter: blur(80px); opacity: 0.3; z-index: -1; animation: float 10s infinite alternate; }
             .orb-1 { width: 400px; height: 400px; background: var(--secondary); top: -10%; left: -10%; }
             .orb-2 { width: 300px; height: 300px; background: var(--primary); bottom: -10%; right: -10%; animation-delay: 2s; }
             @keyframes float { 0% { transform: translate(0,0); } 100% { transform: translate(30px, 30px); } }
 
-            /* --- HEADER --- */
+            /* HEADER */
             .header {
                 padding: 10px 15px; background: var(--header-bg); backdrop-filter: blur(20px);
                 border-bottom: 1px solid var(--glass-border); z-index: 10;
                 display: flex; flex-direction: column; gap: 10px;
             }
             .top-row { display: flex; align-items: center; justify-content: space-between; width: 100%; }
-            
             .brand { display: flex; align-items: center; gap: 10px; font-weight: 700; font-size: 18px; }
             .dot { width: 8px; height: 8px; background: var(--primary); border-radius: 50%; box-shadow: 0 0 10px var(--primary); }
             
@@ -230,7 +235,7 @@ def home():
             }
             .dt-toggle.active .dt-box i { display: block !important; color: black; font-size: 10px; }
             
-            /* --- CHAT --- */
+            /* CHAT AREA */
             .chat-container {
                 flex-grow: 1; padding: 20px; overflow-y: auto; display: flex; flex-direction: column; gap: 15px; scroll-behavior: smooth;
             }
@@ -243,7 +248,7 @@ def home():
             .img-preview { max-width: 100%; border-radius: 10px; margin-top: 5px; display: block; }
             @keyframes popIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
 
-            /* --- THINKING INDICATOR --- */
+            /* THINKING INDICATOR */
             .thinking-msg {
                 align-self: flex-start; background: var(--ai-bubble); color: #aaa; font-style: italic;
                 border: 1px solid var(--glass-border); border-bottom-left-radius: 4px;
@@ -252,7 +257,7 @@ def home():
             }
             @keyframes pulse { 0%, 100% { opacity: 0.6; } 50% { opacity: 1; } }
 
-            /* --- MARKDOWN STYLES --- */
+            /* MARKDOWN STYLES */
             .ai-msg h1, .ai-msg h2, .ai-msg h3 { margin: 10px 0; color: var(--primary); }
             .ai-msg p { margin: 5px 0; }
             .ai-msg strong { color: #fff; font-weight: 700; }
@@ -261,7 +266,7 @@ def home():
             .ai-msg pre code { background: none; color: #aaffaa; padding: 0; }
             .ai-msg ul, .ai-msg ol { margin: 5px 0; padding-left: 20px; }
 
-            /* --- INPUT AREA --- */
+            /* INPUT AREA */
             .input-area {
                 padding: 15px; background: var(--header-bg); backdrop-filter: blur(20px);
                 border-top: 1px solid var(--glass-border); display: flex; gap: 10px; align-items: flex-end;
@@ -320,7 +325,7 @@ def home():
         </div>
 
         <div class="chat-container" id="chat">
-            <div class="message ai-msg">Online.</div>
+            <div class="message ai-msg">Online. Shift+Enter for new line.</div>
         </div>
 
         <div class="input-area">
@@ -456,6 +461,9 @@ def home():
                 }).then(r=>r.json()).then(d => {
                     removeThinkingMsg();
                     addMsg(d.html || d.text, "ai-msg", null, true);
+                }).catch(e => {
+                    removeThinkingMsg();
+                    addMsg("Error getting response.", "ai-msg");
                 });
             }
 
@@ -482,7 +490,7 @@ def home():
                     reader.readAsDataURL(blob);
                     reader.onloadend = () => {
                         let b64 = reader.result.split(',')[1];
-                        addMsg("🎤 Processing Audio...", "user-msg");
+                        addMsg("🎤 Audio Input", "user-msg");
                         fetch("/process_voice", {
                             method: "POST", headers: {"Content-Type": "application/json"},
                             body: JSON.stringify({audio: b64})
