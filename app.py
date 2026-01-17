@@ -21,7 +21,6 @@ GEMINI_KEY = os.environ.get("GEMINI")
 MODEL_CHAINS = {
     "GEMINI": [
         "gemini-3-flash-preview", 
-        "gemini-2.0-flash-exp",
         "gemini-2.5-flash",
         "gemini-2.5-flash-lite"
     ],
@@ -33,7 +32,12 @@ MODEL_CHAINS = {
     ],
     "DIRECTOR": [
         "gemini-3-flash-preview",
-        "gemini-2.0-flash-exp"
+        "gemini-2.5-flash",
+        "gemini-2.5-flash-lite",
+        "gemma-3-27b-it",
+        "gemma-3-12b-it",
+        "gemma-3-4b-it",
+        "gemma-3-2b-it"
     ],
     # Voice models
     "NATIVE_AUDIO": "gemini-2.5-flash-native-audio-dialog", 
