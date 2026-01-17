@@ -4,7 +4,7 @@ import base64
 import asyncio
 import requests
 import markdown2
-import numpy as np
+# import numpy as np # Removed to prevent crash if you forgot to add it to requirements.txt, not strictly needed for this logic.
 from flask import Flask, request, jsonify
 from flask_sock import Sock
 from google import genai
@@ -16,8 +16,7 @@ sock = Sock(app)
 # --- CONFIGURATION ---
 GEMINI_KEY = os.environ.get("GEMINI")
 
-# --- MODEL CHAINS (Restored) ---
-# The system tries the top model. If it fails, it tries the next.
+# --- MODEL CHAINS (Fully Restored as Requested) ---
 MODEL_CHAINS = {
     "GEMINI": [
         "gemini-3-flash-preview", 
@@ -28,7 +27,8 @@ MODEL_CHAINS = {
         "gemma-3-27b-it",
         "gemma-3-12b-it",
         "gemma-3-4b-it",
-        "gemma-3-2b-it"
+        "gemma-3-2b-it",
+        "gemma-3-1b-it"
     ],
     "DIRECTOR": [
         "gemini-3-flash-preview",
@@ -37,7 +37,8 @@ MODEL_CHAINS = {
         "gemma-3-27b-it",
         "gemma-3-12b-it",
         "gemma-3-4b-it",
-        "gemma-3-2b-it"
+        "gemma-3-2b-it",
+        "gemma-3-1b-it"
     ],
     # Voice models
     "NATIVE_AUDIO": "gemini-2.5-flash-native-audio-dialog", 
@@ -50,7 +51,7 @@ def parse_markdown(text):
         return markdown2.markdown(text, extras=["tables", "fenced-code-blocks", "strike", "break-on-newline"])
     except: return text
 
-# --- HELPER: ROBUST REQUEST (Restored) ---
+# --- HELPER: ROBUST REQUEST ---
 def try_model_chain(chain_key, payload):
     """Iterates through the fallback chain until one works"""
     models = MODEL_CHAINS.get(chain_key, MODEL_CHAINS["GEMINI"])
@@ -85,6 +86,7 @@ def call_ai_text(model_id, prompt, image_data=None, deep_think=False):
     # 1. Director Review (Deep Think)
     if deep_think:
         prompt = f"CRITICAL INSTRUCTION: Review your own answer for accuracy/tone before replying.\n\nUser: {prompt}"
+        chain_key = "DIRECTOR" # Use the massive fallback chain
 
     parts = [{ "text": prompt }]
     if image_data:
@@ -100,7 +102,6 @@ def generate_tts():
     text = request.json.get('text')
     if not text: return jsonify({"error": "No text"}), 400
 
-    # Uses the Neural TTS model
     url = f"https://generativelanguage.googleapis.com/v1beta/models/{MODEL_CHAINS['NEURAL_TTS']}:generateContent?key={GEMINI_KEY}"
     payload = { "contents": [{ "parts": [{ "text": text }] }] }
     
@@ -116,11 +117,12 @@ def generate_tts():
     
     return jsonify({"error": "Failed"}), 500
 
-# --- WEBSOCKET LIVE CALL ---
+# --- WEBSOCKET LIVE CALL (Google GenAI SDK) ---
 @sock.route('/ws/live')
 def live_socket(ws):
     client = genai.Client(api_key=GEMINI_KEY, http_options={'api_version': 'v1alpha'})
     
+    # EXACT CONFIGURATION FOR AUDIO
     config = types.LiveConnectConfig(
         response_modalities=["AUDIO"], 
         output_audio_transcription=types.AudioTranscriptionConfig()
@@ -128,14 +130,14 @@ def live_socket(ws):
     
     async def session_loop():
         try:
-            # We use the Native Audio model here
+            # Connect to Native Audio Model
             async with client.aio.live.connect(model=MODEL_CHAINS["NATIVE_AUDIO"], config=config) as session:
                 print(">> Connected to Gemini Live")
                 
                 async def send_audio():
                     while True:
                         try:
-                            # Use executor to make ws.receive non-blocking so it doesn't freeze Flask
+                            # Use executor to make ws.receive non-blocking
                             data = await asyncio.get_event_loop().run_in_executor(None, ws.receive)
                             if not data: break
                             
@@ -200,19 +202,20 @@ def home():
             .header { padding: 10px 15px; background: var(--header); border-bottom: 1px solid var(--border); z-index: 10; display: flex; flex-direction: column; gap: 10px; }
             .top { display: flex; justify-content: space-between; align-items: center; }
             .brand { font-weight: 700; font-size: 18px; display: flex; gap: 10px; align-items: center; }
-            .dot { width: 8px; height: 8px; background: var(--primary); border-radius: 50%; box-shadow: 0 0 10px var(--primary); }
-            
+            .dot { width: 8px; height: 8px; background: var(--primary); border-radius: 50%; box-shadow: 0 0 10px var(--primary); animation: pulse 2s infinite; }
+            @keyframes pulse { 0% { opacity: 1; } 50% { opacity: 0.5; } }
+
             .switcher { background: rgba(0,0,0,0.3); border: 1px solid var(--border); border-radius: 20px; padding: 2px; display: flex; }
-            .mod-btn { padding: 5px 10px; border-radius: 16px; font-size: 10px; font-weight: 600; color: #888; cursor: pointer; }
+            .mod-btn { padding: 5px 10px; border-radius: 16px; font-size: 10px; font-weight: 600; color: #888; cursor: pointer; transition: 0.3s; }
             .mod-btn.active { background: rgba(0, 242, 234, 0.2); color: var(--primary); }
             
             .dt-toggle { font-size: 11px; color: #888; display: flex; align-items: center; gap: 5px; cursor: pointer; }
-            .dt-box { width: 14px; height: 14px; border: 1px solid #555; border-radius: 3px; display: flex; align-items: center; justify-content: center; }
+            .dt-box { width: 14px; height: 14px; border: 1px solid #555; border-radius: 3px; display: flex; align-items: center; justify-content: center; transition: 0.3s; }
             .dt-toggle.active { color: #ffd700; }
-            .dt-toggle.active .dt-box { background: #ffd700; border-color: #ffd700; color: #000; }
+            .dt-toggle.active .dt-box { background: #ffd700; border-color: #ffd700; color: #000; box-shadow: 0 0 8px #ffd700; }
 
             .chat { flex-grow: 1; padding: 20px; overflow-y: auto; display: flex; flex-direction: column; gap: 15px; }
-            .msg { max-width: 85%; padding: 12px 16px; border-radius: 18px; font-size: 15px; line-height: 1.5; word-wrap: break-word; animation: pop 0.2s ease; position: relative; }
+            .msg { max-width: 85%; padding: 12px 16px; border-radius: 18px; font-size: 15px; line-height: 1.5; word-wrap: break-word; animation: pop 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275); position: relative; }
             .user { align-self: flex-end; background: linear-gradient(135deg, var(--primary), #00a8a2); color: #000; font-weight: 500; border-bottom-right-radius: 4px; }
             .ai { align-self: flex-start; background: rgba(255,255,255,0.05); border: 1px solid var(--border); border-bottom-left-radius: 4px; }
             .img-prev { max-width: 100%; border-radius: 10px; margin-top: 5px; display: block; }
@@ -226,26 +229,27 @@ def home():
             .tts-btn {
                 position: absolute; bottom: -25px; right: 0; background: rgba(255,255,255,0.1); 
                 color: #aaa; border: none; border-radius: 50%; width: 24px; height: 24px;
-                display: flex; align-items: center; justify-content: center; cursor: pointer; font-size: 10px;
+                display: flex; align-items: center; justify-content: center; cursor: pointer; font-size: 10px; transition: 0.2s;
             }
             .tts-btn:hover { color: var(--primary); background: rgba(0,242,234,0.1); }
 
             .input-area { padding: 15px; background: var(--header); border-top: 1px solid var(--border); display: flex; gap: 10px; align-items: flex-end; padding-bottom: max(15px, env(safe-area-inset-bottom)); }
             .txt-box { flex-grow: 1; position: relative; }
             textarea { width: 100%; background: rgba(0,0,0,0.4); border: 1px solid var(--border); padding: 12px 15px; border-radius: 20px; color: #fff; font-size: 16px; resize: none; height: 48px; max-height: 120px; transition: 0.3s; font-family: inherit; }
-            textarea:focus { border-color: var(--primary); }
+            textarea:focus { border-color: var(--primary); box-shadow: 0 0 15px rgba(0,242,234,0.2); }
             
             .icon-btn { width: 48px; height: 48px; border-radius: 50%; border: 1px solid var(--border); background: rgba(255,255,255,0.05); color: #aaa; font-size: 18px; display: flex; align-items: center; justify-content: center; cursor: pointer; transition: 0.2s; flex-shrink: 0; }
             .icon-btn:hover { color: var(--primary); border-color: var(--primary); }
             .send-btn { background: var(--primary); color: #000; border: none; }
 
             /* LIVE CALL MODAL */
-            .call-modal { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(5,5,8,0.95); z-index: 100; display: none; flex-direction: column; align-items: center; justify-content: center; backdrop-filter: blur(10px); }
+            .call-modal { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(5,5,8,0.95); z-index: 100; display: none; flex-direction: column; align-items: center; justify-content: center; backdrop-filter: blur(10px); animation: fadeIn 0.3s ease; }
             .call-status { font-size: 24px; font-weight: 700; color: #fff; margin-bottom: 10px; }
             .call-subtitle { font-size: 14px; color: #aaa; margin-bottom: 30px; text-align: center; max-width: 80%; }
             .call-visualizer { display: flex; gap: 5px; height: 50px; align-items: center; margin-bottom: 40px; }
             .bar { width: 6px; background: var(--primary); border-radius: 3px; animation: wave 1s infinite ease-in-out; height: 10px; }
             @keyframes wave { 0%, 100% { height: 10px; opacity: 0.5; } 50% { height: 40px; opacity: 1; } }
+            @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
             
             .call-controls { display: flex; gap: 20px; }
             .call-btn { width: 70px; height: 70px; border-radius: 50%; border: none; display: flex; align-items: center; justify-content: center; font-size: 24px; cursor: pointer; transition: 0.2s; }
@@ -336,12 +340,10 @@ def home():
                 let d = document.createElement("div");
                 d.className = "msg " + type;
                 
-                // Add content
                 let contentDiv = document.createElement("div");
                 if(isHtml) contentDiv.innerHTML = txt; else contentDiv.innerText = txt;
                 d.appendChild(contentDiv);
 
-                // Add TTS Button for AI messages
                 if (type === "ai" && !isLive) {
                     let btn = document.createElement("button");
                     btn.className = "tts-btn";
@@ -482,7 +484,6 @@ def home():
                 if(mediaRecorder) mediaRecorder.stop();
                 if(audioContext) audioContext.close();
                 document.getElementById('callModal').style.display = 'none';
-                addMsg("Call Ended", "ai");
             }
 
         </script>
