@@ -4,7 +4,7 @@ import base64
 import asyncio
 import requests
 import markdown2
-# import numpy as np # Keep commented unless you strictly need numpy features
+# import numpy as np # Keep commented unless strictly needed
 from flask import Flask, request, jsonify
 from flask_sock import Sock
 from google import genai
@@ -16,7 +16,7 @@ sock = Sock(app)
 # --- CONFIGURATION ---
 GEMINI_KEY = os.environ.get("GEMINI")
 
-# --- MODEL CHAINS ---
+# --- MODEL CHAINS (EXACTLY AS REQUESTED) ---
 MODEL_CHAINS = {
     "GEMINI": [
         "gemini-3-flash-preview", 
@@ -30,6 +30,7 @@ MODEL_CHAINS = {
         "gemma-3-2b-it",
         "gemma-3-1b-it"
     ],
+    # The massive fallback chain you requested
     "DIRECTOR": [
         "gemini-3-flash-preview",
         "gemini-2.5-flash",
@@ -40,8 +41,9 @@ MODEL_CHAINS = {
         "gemma-3-2b-it",
         "gemma-3-1b-it"
     ],
-    "NATIVE_AUDIO": "gemini-2.5-flash-native-audio-dialog", 
-    "NEURAL_TTS": "gemini-2.5-flash-tts"
+    # Wrapped in lists to prevent iteration errors in the backend loop
+    "NATIVE_AUDIO": ["gemini-2.5-flash-native-audio-dialog"], 
+    "NEURAL_TTS": ["gemini-2.5-flash-tts"]
 }
 
 # --- MARKDOWN PARSING ---
@@ -93,7 +95,7 @@ def director_review_process(original_prompt, initial_response):
     parts = [{ "text": review_prompt }]
     payload = { "contents": [{ "parts": parts }] }
     
-    # Use the specific DIRECTOR chain
+    # Use the massive DIRECTOR chain
     return try_model_chain("DIRECTOR", payload)
 
 # --- REST AI CALLER ---
@@ -122,7 +124,9 @@ def generate_tts():
     text = request.json.get('text')
     if not text: return jsonify({"error": "No text"}), 400
 
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/{MODEL_CHAINS['NEURAL_TTS']}:generateContent?key={GEMINI_KEY}"
+    # Uses the first model in the NEURAL_TTS chain
+    model = MODEL_CHAINS['NEURAL_TTS'][0]
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={GEMINI_KEY}"
     payload = { "contents": [{ "parts": [{ "text": text }] }] }
     
     try:
@@ -149,12 +153,16 @@ def live_socket(ws):
     
     async def session_loop():
         try:
-            async with client.aio.live.connect(model=MODEL_CHAINS["NATIVE_AUDIO"], config=config) as session:
-                print(">> Connected to Gemini Live")
+            # Uses the first model in NATIVE_AUDIO chain
+            target_model = MODEL_CHAINS["NATIVE_AUDIO"][0]
+            
+            async with client.aio.live.connect(model=target_model, config=config) as session:
+                print(f">> Connected to {target_model}")
                 
                 async def send_audio():
                     while True:
                         try:
+                            # Use executor to make ws.receive non-blocking
                             data = await asyncio.get_event_loop().run_in_executor(None, ws.receive)
                             if not data: break
                             
@@ -169,11 +177,14 @@ def live_socket(ws):
                     while True:
                         async for response in session.receive():
                             payload = {}
+                            
+                            # Audio
                             if response.server_content and response.server_content.model_turn:
                                 for part in response.server_content.model_turn.parts:
                                     if part.inline_data:
                                         payload["audio"] = base64.b64encode(part.inline_data.data).decode('utf-8')
                             
+                            # Text Transcription
                             if response.server_content and response.server_content.output_transcription:
                                 payload["text"] = response.server_content.output_transcription.text
 
