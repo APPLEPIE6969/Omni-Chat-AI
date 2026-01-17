@@ -4,9 +4,10 @@ import base64
 import asyncio
 import requests
 import markdown2
-# import numpy as np # Keep commented unless strictly needed
+import io
 from flask import Flask, request, jsonify
 from flask_sock import Sock
+from gtts import gTTS  # <--- Essential for the button to work
 from google import genai
 from google.genai import types
 
@@ -16,7 +17,7 @@ sock = Sock(app)
 # --- CONFIGURATION ---
 GEMINI_KEY = os.environ.get("GEMINI")
 
-# --- MODEL CHAINS (EXACTLY AS REQUESTED) ---
+# --- MODEL CHAINS ---
 MODEL_CHAINS = {
     "GEMINI": [
         "gemini-3-flash-preview", 
@@ -27,10 +28,8 @@ MODEL_CHAINS = {
         "gemma-3-27b-it",
         "gemma-3-12b-it",
         "gemma-3-4b-it",
-        "gemma-3-2b-it",
-        "gemma-3-1b-it"
+        "gemma-3-2b-it"
     ],
-    # The massive fallback chain you requested
     "DIRECTOR": [
         "gemini-3-flash-preview",
         "gemini-2.5-flash",
@@ -38,12 +37,9 @@ MODEL_CHAINS = {
         "gemma-3-27b-it",
         "gemma-3-12b-it",
         "gemma-3-4b-it",
-        "gemma-3-2b-it",
-        "gemma-3-1b-it"
+        "gemma-3-2b-it"
     ],
-    # Wrapped in lists to prevent iteration errors in the backend loop
-    "NATIVE_AUDIO": ["gemini-2.5-flash-native-audio-dialog"], 
-    "NEURAL_TTS": ["gemini-2.5-flash-tts"]
+    "NATIVE_AUDIO": ["gemini-2.5-flash-native-audio-dialog"]
 }
 
 # --- MARKDOWN PARSING ---
@@ -54,7 +50,6 @@ def parse_markdown(text):
 
 # --- HELPER: ROBUST REQUEST ---
 def try_model_chain(chain_key, payload):
-    """Iterates through the fallback chain until one works"""
     models = MODEL_CHAINS.get(chain_key, MODEL_CHAINS["GEMINI"])
     last_error = "No models available"
 
@@ -80,28 +75,13 @@ def try_model_chain(chain_key, payload):
 
     return f"Error: All models failed. ({last_error})"
 
-# --- RESTORED: DIRECTOR REVIEW LOGIC ---
-def director_review_process(original_prompt, initial_response):
-    """The Director AI reviews the Worker's answer and fixes it."""
-    review_prompt = (
-        f"ORIGINAL USER PROMPT: {original_prompt}\n"
-        f"DRAFT RESPONSE: {initial_response}\n\n"
-        "INSTRUCTION: You are the Director. Review the draft response above. "
-        "If it is accurate and high quality, repeat it exactly. "
-        "If it has errors or bad tone, rewrite it to be perfect. "
-        "Return ONLY the final response text."
-    )
-    
-    parts = [{ "text": review_prompt }]
-    payload = { "contents": [{ "parts": parts }] }
-    
-    # Use the massive DIRECTOR chain
-    return try_model_chain("DIRECTOR", payload)
-
 # --- REST AI CALLER ---
 def call_ai_text(model_id, prompt, image_data=None, deep_think=False):
-    # 1. Select the initial chain (Gemini or Gemma)
     chain_key = model_id if model_id in MODEL_CHAINS else "GEMINI"
+    
+    if deep_think:
+        prompt = f"CRITICAL INSTRUCTION: Review your own answer for accuracy/tone before replying.\n\nUser: {prompt}"
+        chain_key = "DIRECTOR" 
 
     parts = [{ "text": prompt }]
     if image_data:
@@ -109,37 +89,25 @@ def call_ai_text(model_id, prompt, image_data=None, deep_think=False):
     
     payload = { "contents": [{ "parts": parts }] }
     
-    # 2. Get Initial Answer
-    response_text = try_model_chain(chain_key, payload)
-    
-    # 3. Apply Deep Think (Director Review) if enabled
-    if deep_think and not response_text.startswith("Error:"):
-        response_text = director_review_process(prompt, response_text)
-    
-    return response_text
+    return try_model_chain(chain_key, payload)
 
-# --- HELPER: TTS GENERATION ---
+# --- HELPER: GTTS GENERATION (FIXED) ---
 @app.route('/generate_tts', methods=['POST'])
 def generate_tts():
     text = request.json.get('text')
     if not text: return jsonify({"error": "No text"}), 400
 
-    # Uses the first model in the NEURAL_TTS chain
-    model = MODEL_CHAINS['NEURAL_TTS'][0]
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={GEMINI_KEY}"
-    payload = { "contents": [{ "parts": [{ "text": text }] }] }
-    
     try:
-        r = requests.post(url, json=payload)
-        data = r.json()
-        if "candidates" in data:
-            for part in data["candidates"][0]["content"]["parts"]:
-                if "inline_data" in part:
-                    return jsonify({"audio": part["inline_data"]["data"]})
+        # We use gTTS library instead of Gemini API for the button
+        # This is much faster and more reliable for reading text bubbles
+        tts = gTTS(text=text, lang='en')
+        fp = io.BytesIO()
+        tts.write_to_fp(fp)
+        fp.seek(0)
+        b64 = base64.b64encode(fp.read()).decode()
+        return jsonify({"audio": b64})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
-    
-    return jsonify({"error": "Failed"}), 500
 
 # --- WEBSOCKET LIVE CALL (Google GenAI SDK) ---
 @sock.route('/ws/live')
@@ -153,7 +121,7 @@ def live_socket(ws):
     
     async def session_loop():
         try:
-            # Uses the first model in NATIVE_AUDIO chain
+            # We grab the first model from the NATIVE_AUDIO chain
             target_model = MODEL_CHAINS["NATIVE_AUDIO"][0]
             
             async with client.aio.live.connect(model=target_model, config=config) as session:
@@ -162,10 +130,8 @@ def live_socket(ws):
                 async def send_audio():
                     while True:
                         try:
-                            # Use executor to make ws.receive non-blocking
-                            data = await asyncio.get_event_loop().run_in_executor(None, ws.receive)
+                            data = await asyncio.to_thread(ws.receive)
                             if not data: break
-                            
                             msg = json.loads(data)
                             if "audio" in msg:
                                 await session.send(input={"data": msg["audio"], "mime_type": "application/pcm"}, end_of_turn=False)
@@ -177,20 +143,14 @@ def live_socket(ws):
                     while True:
                         async for response in session.receive():
                             payload = {}
-                            
-                            # Audio
                             if response.server_content and response.server_content.model_turn:
                                 for part in response.server_content.model_turn.parts:
                                     if part.inline_data:
                                         payload["audio"] = base64.b64encode(part.inline_data.data).decode('utf-8')
-                            
-                            # Text Transcription
                             if response.server_content and response.server_content.output_transcription:
                                 payload["text"] = response.server_content.output_transcription.text
-
                             if payload:
-                                await asyncio.get_event_loop().run_in_executor(None, ws.send, json.dumps(payload))
-
+                                await asyncio.to_thread(ws.send, json.dumps(payload))
                 await asyncio.gather(send_audio(), receive_response())
         except Exception as e:
             print(f"WS Error: {e}")
