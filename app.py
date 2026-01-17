@@ -10,13 +10,13 @@ app = Flask(__name__)
 # --- CONFIGURATION ---
 GEMINI_KEY = os.environ.get("GEMINI")
 
-# --- MODEL ROSTER ---
+# --- MODEL ROSTER (Kept exactly as requested) ---
 MODELS = {
     "GEMINI": "gemini-3-flash-preview",                   # Standard Brain
-    "GEMMA": "gemma-3-27b-it",                    # Creative / Open Model
+    "GEMMA": "gemma-3-27b-it",                            # Creative / Open Model
     "DIRECTOR": "gemini-3-flash-preview",                 # Deep Think Reviewer
     "NATIVE_AUDIO": "gemini-2.5-flash-native-audio-dialog", # Voice Mode
-    "NEURAL_TTS": "gemini-2.5-flash-tts"          # Fallback TTS
+    "NEURAL_TTS": "gemini-2.5-flash-tts"                  # Fallback TTS
 }
 
 # --- MARKDOWN PARSING ---
@@ -34,7 +34,10 @@ def parse_markdown(text):
         "smarty-pants",
         "link-patterns"
     ]
-    return markdown2.markdown(text, extras=extras)
+    try:
+        return markdown2.markdown(text, extras=extras)
+    except:
+        return text # Fallback to raw text if parsing fails
 
 # --- HELPER: TTS ---
 def generate_neural_speech(text):
@@ -89,7 +92,15 @@ def call_ai(mode, model_id=None, prompt=None, audio_data=None, image_data=None, 
         
         try:
             r = requests.post(url, json=payload)
-            response_text = r.json()["candidates"][0]["content"]["parts"][0]["text"]
+            # Check for API errors
+            if r.status_code != 200:
+                return {"text": f"API Error {r.status_code}: {r.text}", "audio": None}
+                
+            response_json = r.json()
+            if "candidates" not in response_json:
+                return {"text": "Model returned no content.", "audio": None}
+
+            response_text = response_json["candidates"][0]["content"]["parts"][0]["text"]
             
             # Apply Deep Think if requested
             if deep_think:
@@ -97,7 +108,7 @@ def call_ai(mode, model_id=None, prompt=None, audio_data=None, image_data=None, 
                 
             return {"text": response_text, "audio": None}
         except Exception as e: 
-            return {"text": f"Error: {str(e)}", "audio": None}
+            return {"text": f"System Error: {str(e)}", "audio": None}
 
     # 2. VOICE MODE (Audible)
     if mode == "voice":
@@ -204,20 +215,8 @@ def home():
                 transform: scale(1.1);
                 transition: all 0.3s ease-out;
             }
-            .dt-toggle.active .dt-box i.fa-check {
-                transform: scale(1) rotate(0deg);
-                opacity: 1;
-                transition: all 0.4s cubic-bezier(0.68, -0.55, 0.265, 1.55);
-            }
-            .dt-box i.fa-check {
-                transform: scale(0) rotate(-45deg);
-                opacity: 0;
-                transition: all 0.3s ease-out;
-            }
-            .dt-box {
-                transition: all 0.3s ease-out;
-            }
-
+            .dt-toggle.active .dt-box i { display: block !important; color: black; font-size: 10px; }
+            
             /* --- CHAT --- */
             .chat-container {
                 flex-grow: 1; padding: 20px; overflow-y: auto; display: flex; flex-direction: column; gap: 15px; scroll-behavior: smooth;
@@ -233,97 +232,23 @@ def home():
 
             /* --- THINKING INDICATOR --- */
             .thinking-msg {
-                align-self: flex-start; background: var(--ai-bubble); color: #eee;
+                align-self: flex-start; background: var(--ai-bubble); color: #aaa; font-style: italic;
                 border: 1px solid var(--glass-border); border-bottom-left-radius: 4px;
-                max-width: 85%; padding: 12px 16px; border-radius: 18px; font-size: 15px;
-                position: relative; word-wrap: break-word; animation: popIn 0.2s ease;
+                max-width: 85%; padding: 12px 16px; border-radius: 18px; font-size: 14px;
+                animation: pulse 1.5s infinite;
             }
-            .thinking-content {
-                display: flex; align-items: center; gap: 8px;
-            }
-            .thinking-dots {
-                display: flex; gap: 4px; align-items: center;
-            }
-            .thinking-dot {
-                width: 8px; height: 8px; background: var(--primary); border-radius: 50%;
-                animation: thinkingPulse 1.4s infinite ease-in-out both;
-            }
-            .thinking-dot:nth-child(1) { animation-delay: -0.32s; }
-            .thinking-dot:nth-child(2) { animation-delay: -0.16s; }
-            .thinking-dot:nth-child(3) { animation-delay: 0s; }
-            @keyframes thinkingPulse {
-                0%, 80%, 100% { transform: scale(0.8); opacity: 0.5; }
-                40% { transform: scale(1.2); opacity: 1; }
-            }
-            .thinking-text {
-                color: #aaa; font-size: 14px; font-style: italic;
-            }
+            @keyframes pulse { 0%, 100% { opacity: 0.6; } 50% { opacity: 1; } }
 
             /* --- MARKDOWN STYLES --- */
-            .ai-msg h1, .ai-msg h2, .ai-msg h3, .ai-msg h4, .ai-msg h5, .ai-msg h6 {
-                margin: 15px 0 10px 0; font-weight: 700; line-height: 1.3;
-            }
-            .ai-msg h1 { font-size: 1.8em; color: var(--primary); border-bottom: 2px solid var(--primary); padding-bottom: 5px; }
-            .ai-msg h2 { font-size: 1.5em; color: var(--secondary); border-bottom: 1px solid var(--secondary); padding-bottom: 3px; }
-            .ai-msg h3 { font-size: 1.3em; color: #fff; }
-            .ai-msg h4 { font-size: 1.1em; color: #ddd; }
-            .ai-msg h5 { font-size: 1em; color: #ccc; }
-            .ai-msg h6 { font-size: 0.9em; color: #bbb; }
+            .ai-msg h1, .ai-msg h2, .ai-msg h3 { margin: 10px 0; color: var(--primary); }
+            .ai-msg p { margin: 5px 0; }
+            .ai-msg strong { color: #fff; font-weight: 700; }
+            .ai-msg code { background: rgba(0, 242, 234, 0.1); color: var(--primary); padding: 2px 4px; border-radius: 4px; font-family: monospace; font-size: 0.9em; }
+            .ai-msg pre { background: rgba(0,0,0,0.5); padding: 10px; border-radius: 8px; overflow-x: auto; margin: 10px 0; border: 1px solid var(--glass-border); }
+            .ai-msg pre code { background: none; color: #aaffaa; padding: 0; }
+            .ai-msg ul, .ai-msg ol { margin: 5px 0; padding-left: 20px; }
 
-            .ai-msg p { margin: 10px 0; line-height: 1.6; }
-
-            .ai-msg em, .ai-msg i { font-style: italic; color: #ddd; }
-            .ai-msg strong, .ai-msg b { font-weight: 700; color: #fff; }
-            .ai-msg strong em, .ai-msg b i { font-weight: 700; font-style: italic; color: #fff; }
-            .ai-msg del, .ai-msg strike { text-decoration: line-through; color: #888; }
-
-            .ai-msg ul, .ai-msg ol { margin: 10px 0; padding-left: 25px; }
-            .ai-msg li { margin: 5px 0; line-height: 1.5; }
-            .ai-msg ul li { list-style-type: disc; }
-            .ai-msg ol li { list-style-type: decimal; }
-
-            .ai-msg code {
-                background: rgba(0, 242, 234, 0.1); color: var(--primary);
-                padding: 2px 6px; border-radius: 4px; font-family: 'JetBrains Mono', monospace;
-                font-size: 0.9em; border: 1px solid rgba(0, 242, 234, 0.3);
-            }
-
-            .ai-msg pre {
-                background: rgba(0, 0, 0, 0.6); border: 1px solid var(--glass-border);
-                border-radius: 8px; padding: 15px; margin: 15px 0; overflow-x: auto;
-                position: relative;
-            }
-            .ai-msg pre code {
-                background: none; padding: 0; border: none; color: #fff; font-size: 0.9em;
-                line-height: 1.5;
-            }
-
-            .ai-msg blockquote {
-                border-left: 4px solid var(--primary); margin: 15px 0; padding: 10px 20px;
-                background: rgba(0, 242, 234, 0.05); border-radius: 0 8px 8px 0;
-                font-style: italic; color: #ddd;
-            }
-
-            .ai-msg table {
-                border-collapse: collapse; width: 100%; margin: 15px 0; background: rgba(0, 0, 0, 0.3);
-                border-radius: 8px; overflow: hidden;
-            }
-            .ai-msg th, .ai-msg td {
-                border: 1px solid var(--glass-border); padding: 10px 15px; text-align: left;
-            }
-            .ai-msg th {
-                background: rgba(0, 242, 234, 0.1); font-weight: 700; color: var(--primary);
-            }
-            .ai-msg tr:nth-child(even) { background: rgba(255, 255, 255, 0.02); }
-            .ai-msg tr:hover { background: rgba(0, 242, 234, 0.05); }
-
-            .ai-msg a {
-                color: var(--primary); text-decoration: none; border-bottom: 1px solid transparent;
-                transition: all 0.3s;
-            }
-            .ai-msg a:hover { color: var(--secondary); border-bottom-color: var(--secondary); }
-
-            /* --- INPUT --- */
+            /* --- INPUT AREA --- */
             .input-area {
                 padding: 15px; background: var(--header-bg); backdrop-filter: blur(20px);
                 border-top: 1px solid var(--glass-border); display: flex; gap: 10px; align-items: flex-end;
@@ -347,7 +272,6 @@ def home():
             #micBtn.recording { color: #ff0055; border-color: #ff0055; animation: breathe 1.5s infinite; }
             @keyframes breathe { 0% { box-shadow: 0 0 0 0 rgba(255, 0, 85, 0.4); } 70% { box-shadow: 0 0 0 10px rgba(255, 0, 85, 0); } }
 
-            /* Image Preview */
             #imageUploadPreview {
                 position: absolute; bottom: 60px; left: 15px; width: 60px; height: 60px;
                 border-radius: 10px; object-fit: cover; border: 2px solid var(--primary);
@@ -371,12 +295,12 @@ def home():
                 <div class="brand"><div class="dot"></div> Omni-Chat</div>
                 <div class="switcher">
                     <div class="model-btn active-gemini" id="btnGemini" onclick="setModel('GEMINI')">Gemini 3</div>
-                    <div class="model-btn" id="btnGemma" onclick="setModel('GEMMA')">Gemma 27B</div>
+                    <div class="model-btn" id="btnGemma" onclick="setModel('GEMMA')">Gemma 3</div>
                 </div>
             </div>
             <div class="controls-row">
                 <div class="dt-toggle" id="dtToggle" onclick="toggleDT()">
-                    <div class="dt-box"><i class="fa-solid fa-check" style="font-size: 8px; color: black; display: none;" id="dtCheck"></i></div>
+                    <div class="dt-box"><i class="fa-solid fa-check" style="display: none;" id="dtCheck"></i></div>
                     Deep Think (Director)
                 </div>
             </div>
@@ -436,7 +360,7 @@ def home():
                 }
             }
 
-            function addMsg(text, type, img=null, isHtml=false) {
+            function addMsg(content, type, img=null, isHtml=false) {
                 let div = document.createElement("div");
                 div.className = "message " + type;
                 if (img) {
@@ -447,9 +371,9 @@ def home():
                 }
                 let t = document.createElement("div");
                 if (isHtml && type === "ai-msg") {
-                    t.innerHTML = text;
+                    t.innerHTML = content;
                 } else {
-                    t.innerText = text;
+                    t.innerText = content;
                 }
                 div.appendChild(t);
                 let container = document.getElementById("chat");
@@ -457,53 +381,18 @@ def home():
                 container.scrollTop = container.scrollHeight;
             }
 
-            function addThinkingMsg(text = "Thinking") {
+            function addThinkingMsg() {
                 let div = document.createElement("div");
                 div.className = "thinking-msg";
                 div.id = "thinkingMsg";
-                
-                let content = document.createElement("div");
-                content.className = "thinking-content";
-                
-                let textSpan = document.createElement("span");
-                textSpan.className = "thinking-text";
-                textSpan.textContent = text;
-                
-                let dots = document.createElement("div");
-                dots.className = "thinking-dots";
-                
-                for (let i = 0; i < 3; i++) {
-                    let dot = document.createElement("div");
-                    dot.className = "thinking-dot";
-                    dots.appendChild(dot);
-                }
-                
-                content.appendChild(textSpan);
-                content.appendChild(dots);
-                div.appendChild(content);
-                
-                let container = document.getElementById("chat");
-                container.appendChild(div);
-                container.scrollTop = container.scrollHeight;
-                
-                return div;
+                div.innerText = "Thinking...";
+                document.getElementById("chat").appendChild(div);
+                document.getElementById("chat").scrollTop = document.getElementById("chat").scrollHeight;
             }
 
             function removeThinkingMsg() {
-                let thinkingMsg = document.getElementById("thinkingMsg");
-                if (thinkingMsg) {
-                    thinkingMsg.remove();
-                }
-            }
-
-            function updateThinkingText(text) {
-                let thinkingMsg = document.getElementById("thinkingMsg");
-                if (thinkingMsg) {
-                    let textSpan = thinkingMsg.querySelector(".thinking-text");
-                    if (textSpan) {
-                        textSpan.textContent = text;
-                    }
-                }
+                let msg = document.getElementById("thinkingMsg");
+                if(msg) msg.remove();
             }
 
             // Image Logic
@@ -526,7 +415,7 @@ def home():
                 document.getElementById('previewContainer').style.display = 'none';
             }
 
-            // Textarea Logic (Shift+Enter)
+            // Textarea Logic
             const promptInput = document.getElementById("prompt");
             promptInput.addEventListener("input", function() { this.style.height = "auto"; this.style.height = (this.scrollHeight) + "px"; });
             promptInput.addEventListener("keydown", function(e) {
@@ -546,18 +435,15 @@ def home():
                 let payload = { prompt: txt, model: currentModel, deep_think: deepThinkEnabled };
                 if (currentImageBase64) { payload.image = currentImageBase64; clearImage(); }
 
-                // Show thinking indicator
-                addThinkingMsg("Thinking...");
+                addThinkingMsg();
 
                 fetch("/process_text", {
                     method: "POST", headers: {"Content-Type": "application/json"},
                     body: JSON.stringify(payload)
                 }).then(r=>r.json()).then(d => {
                     removeThinkingMsg();
-                    addMsg(d.text, "ai-msg", null, true);
-                }).catch(error => {
-                    removeThinkingMsg();
-                    addMsg("Error: Failed to get response", "ai-msg");
+                    // Use d.html for markdown rendering, fallback to d.text
+                    addMsg(d.html || d.text, "ai-msg", null, true);
                 });
             }
 
