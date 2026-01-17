@@ -4,7 +4,7 @@ import base64
 import asyncio
 import requests
 import markdown2
-# import numpy as np # Removed to prevent crash if you forgot to add it to requirements.txt, not strictly needed for this logic.
+# import numpy as np # Keep commented unless you strictly need numpy features
 from flask import Flask, request, jsonify
 from flask_sock import Sock
 from google import genai
@@ -16,7 +16,7 @@ sock = Sock(app)
 # --- CONFIGURATION ---
 GEMINI_KEY = os.environ.get("GEMINI")
 
-# --- MODEL CHAINS (Fully Restored as Requested) ---
+# --- MODEL CHAINS ---
 MODEL_CHAINS = {
     "GEMINI": [
         "gemini-3-flash-preview", 
@@ -40,7 +40,6 @@ MODEL_CHAINS = {
         "gemma-3-2b-it",
         "gemma-3-1b-it"
     ],
-    # Voice models
     "NATIVE_AUDIO": "gemini-2.5-flash-native-audio-dialog", 
     "NEURAL_TTS": "gemini-2.5-flash-tts"
 }
@@ -79,14 +78,28 @@ def try_model_chain(chain_key, payload):
 
     return f"Error: All models failed. ({last_error})"
 
+# --- RESTORED: DIRECTOR REVIEW LOGIC ---
+def director_review_process(original_prompt, initial_response):
+    """The Director AI reviews the Worker's answer and fixes it."""
+    review_prompt = (
+        f"ORIGINAL USER PROMPT: {original_prompt}\n"
+        f"DRAFT RESPONSE: {initial_response}\n\n"
+        "INSTRUCTION: You are the Director. Review the draft response above. "
+        "If it is accurate and high quality, repeat it exactly. "
+        "If it has errors or bad tone, rewrite it to be perfect. "
+        "Return ONLY the final response text."
+    )
+    
+    parts = [{ "text": review_prompt }]
+    payload = { "contents": [{ "parts": parts }] }
+    
+    # Use the specific DIRECTOR chain
+    return try_model_chain("DIRECTOR", payload)
+
 # --- REST AI CALLER ---
 def call_ai_text(model_id, prompt, image_data=None, deep_think=False):
+    # 1. Select the initial chain (Gemini or Gemma)
     chain_key = model_id if model_id in MODEL_CHAINS else "GEMINI"
-    
-    # 1. Director Review (Deep Think)
-    if deep_think:
-        prompt = f"CRITICAL INSTRUCTION: Review your own answer for accuracy/tone before replying.\n\nUser: {prompt}"
-        chain_key = "DIRECTOR" # Use the massive fallback chain
 
     parts = [{ "text": prompt }]
     if image_data:
@@ -94,7 +107,14 @@ def call_ai_text(model_id, prompt, image_data=None, deep_think=False):
     
     payload = { "contents": [{ "parts": parts }] }
     
-    return try_model_chain(chain_key, payload)
+    # 2. Get Initial Answer
+    response_text = try_model_chain(chain_key, payload)
+    
+    # 3. Apply Deep Think (Director Review) if enabled
+    if deep_think and not response_text.startswith("Error:"):
+        response_text = director_review_process(prompt, response_text)
+    
+    return response_text
 
 # --- HELPER: TTS GENERATION ---
 @app.route('/generate_tts', methods=['POST'])
@@ -122,7 +142,6 @@ def generate_tts():
 def live_socket(ws):
     client = genai.Client(api_key=GEMINI_KEY, http_options={'api_version': 'v1alpha'})
     
-    # EXACT CONFIGURATION FOR AUDIO
     config = types.LiveConnectConfig(
         response_modalities=["AUDIO"], 
         output_audio_transcription=types.AudioTranscriptionConfig()
@@ -130,14 +149,12 @@ def live_socket(ws):
     
     async def session_loop():
         try:
-            # Connect to Native Audio Model
             async with client.aio.live.connect(model=MODEL_CHAINS["NATIVE_AUDIO"], config=config) as session:
                 print(">> Connected to Gemini Live")
                 
                 async def send_audio():
                     while True:
                         try:
-                            # Use executor to make ws.receive non-blocking
                             data = await asyncio.get_event_loop().run_in_executor(None, ws.receive)
                             if not data: break
                             
@@ -152,14 +169,11 @@ def live_socket(ws):
                     while True:
                         async for response in session.receive():
                             payload = {}
-                            
-                            # Audio
                             if response.server_content and response.server_content.model_turn:
                                 for part in response.server_content.model_turn.parts:
                                     if part.inline_data:
                                         payload["audio"] = base64.b64encode(part.inline_data.data).decode('utf-8')
                             
-                            # Text Transcription
                             if response.server_content and response.server_content.output_transcription:
                                 payload["text"] = response.server_content.output_transcription.text
 
@@ -220,6 +234,11 @@ def home():
             .ai { align-self: flex-start; background: rgba(255,255,255,0.05); border: 1px solid var(--border); border-bottom-left-radius: 4px; }
             .img-prev { max-width: 100%; border-radius: 10px; margin-top: 5px; display: block; }
             @keyframes pop { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+
+            /* LOADING INDICATOR */
+            .loading { display: flex; align-items: center; gap: 8px; color: #aaa; font-style: italic; padding: 10px 16px; }
+            .spinner { width: 12px; height: 12px; border: 2px solid var(--primary); border-top-color: transparent; border-radius: 50%; animation: spin 1s linear infinite; }
+            @keyframes spin { to { transform: rotate(360deg); } }
 
             .ai p { margin: 5px 0; }
             .ai code { background: rgba(0,242,234,0.1); color: var(--primary); padding: 2px 4px; border-radius: 4px; font-family: monospace; }
@@ -357,6 +376,21 @@ def home():
                 c.scrollTop = c.scrollHeight;
             }
 
+            // LOADING UI LOGIC
+            function addLoading() {
+                let d = document.createElement("div");
+                d.className = "msg ai loading";
+                d.id = "loadingMsg";
+                d.innerHTML = 'Thinking <div class="spinner"></div>';
+                document.getElementById("chat").appendChild(d);
+                document.getElementById("chat").scrollTop = document.getElementById("chat").scrollHeight;
+            }
+
+            function removeLoading() {
+                let el = document.getElementById("loadingMsg");
+                if(el) el.remove();
+            }
+
             function playTTS(text) {
                 fetch("/generate_tts", {
                     method: "POST", headers: {"Content-Type": "application/json"},
@@ -385,9 +419,14 @@ def home():
                 let p = { prompt: t, model: currMod, deep_think: dtEnabled };
                 if(imgBase64) { p.image = imgBase64; imgBase64 = null; document.getElementById('previewContainer').style.display='none'; }
 
+                addLoading();
+
                 fetch("/process_text", {
                     method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(p)
-                }).then(r=>r.json()).then(d => addMsg(d.html || d.text, "ai", true));
+                }).then(r=>r.json()).then(d => {
+                    removeLoading();
+                    addMsg(d.html || d.text, "ai", true);
+                });
             }
 
             function handleFile(input) {
