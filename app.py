@@ -202,7 +202,6 @@ def home():
         <title>Omni-Chat Live</title>
         <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
         <meta name="theme-color" content="#050508">
-        
         <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;500;700&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
         <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
         
@@ -251,6 +250,7 @@ def home():
             .ai code { background: rgba(0,242,234,0.1); color: var(--primary); padding: 2px 4px; border-radius: 4px; font-family: monospace; }
             .ai pre { background: rgba(0,0,0,0.5); padding: 10px; border-radius: 8px; overflow-x: auto; margin: 10px 0; }
 
+            /* TTS Button */
             .tts-btn { position: absolute; bottom: -25px; right: 0; background: rgba(255,255,255,0.1); color: #aaa; border: none; border-radius: 50%; width: 24px; height: 24px; display: flex; align-items: center; justify-content: center; cursor: pointer; font-size: 10px; transition: 0.2s; }
             .tts-btn:hover { color: var(--primary); background: rgba(0,242,234,0.1); }
 
@@ -472,19 +472,28 @@ def home():
             txtIn.addEventListener("input", function() { this.style.height = "auto"; this.style.height = this.scrollHeight + "px"; });
             txtIn.addEventListener("keydown", function(e) { if(e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendText(); } });
 
+            // SMART IMAGE GENERATION DETECTION
             async function sendText() {
                 let t = txtIn.value.trim();
                 if(!t && !imgBase64) return;
                 
-                addMsg(t, "user");
+                // Clear Input UI immediately
                 txtIn.value = "";
                 txtIn.style.height = "48px";
+                let imgToSend = imgBase64;
+                imgBase64 = null;
+                document.getElementById('previewContainer').style.display='none';
 
-                // Check if user wants image generation
-                if(t.toLowerCase().startsWith("/image") || t.toLowerCase().startsWith("generate image")) {
+                // Check for Image Generation Intent
+                const imageRegex = /(?:generate|create|make|draw)\s+(?:an?\s+)?(?:image|picture|photo|painting|art)|^\/image/i;
+                
+                if (imageRegex.test(t)) {
+                    addMsg(t, "user"); // Show user prompt
                     addLoading();
                     try {
-                        const imgEl = await puter.ai.txt2img(t.replace("/image", ""), { model: selectedImgModel });
+                        const cleanPrompt = t.replace(/^\/image/, '').replace(/generate a image/i, '').trim();
+                        // Call Puter.js
+                        const imgEl = await puter.ai.txt2img(cleanPrompt || t, { model: selectedImgModel });
                         removeLoading();
                         addMsg(imgEl, "ai");
                         chatHistory.push({ role: "model", parts: [{ text: "[Image Generated]" }] });
@@ -492,9 +501,11 @@ def home():
                         removeLoading();
                         addMsg("Image Gen Error: " + e, "ai");
                     }
-                    return;
+                    return; // Stop here, don't send to LLM
                 }
                 
+                // Normal Text Chat
+                addMsg(t, "user");
                 chatHistory.push({ role: "user", parts: [{ text: t }] });
                 
                 let p = { 
@@ -503,7 +514,7 @@ def home():
                     model: currMod, 
                     deep_think: dtEnabled 
                 };
-                if(imgBase64) { p.image = imgBase64; imgBase64 = null; document.getElementById('previewContainer').style.display='none'; }
+                if(imgToSend) { p.image = imgToSend; }
 
                 addLoading();
 
@@ -529,7 +540,6 @@ def home():
             }
 
             // --- LIVE CALL LOGIC ---
-            // Live Call Variables
             let mediaRecorder = null;
             let ws = null;
             let audioContext = null;
