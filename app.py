@@ -18,8 +18,7 @@ sock = Sock(app)
 # --- CONFIGURATION ---
 GEMINI_KEY = os.environ.get("GEMINI_KEY")
 
-# --- SERVER-SIDE MODEL CHAINS (Your Personal API Keys) ---
-# These are used when you select "Director Mode" or "Server" specific models
+# --- SERVER-SIDE MODEL CHAINS (Your Specific API Key Models) ---
 MODEL_CHAINS = {
     "GEMINI": [
         "gemini-3-flash-preview", 
@@ -37,19 +36,15 @@ MODEL_CHAINS = {
         "gemini-3-flash-preview",
         "gemini-2.5-flash",
         "gemini-2.5-flash-lite",
-        "gemma-3-27b-it",
-        "gemma-3-12b-it",
-        "gemma-3-4b-it",
-        "gemma-3-2b-it"
+        "gemma-3-27b-it"
     ],
     "NATIVE_AUDIO": ["gemini-2.0-flash-exp"], 
     "NEURAL_TTS": ["gemini-2.5-flash-tts"]
 }
 
-# --- MARKDOWN PARSING ---
+# --- SERVER-SIDE MARKDOWN PARSING ---
 def parse_markdown(text):
     try:
-        # Fenced code blocks are critical for the copy button to work
         return markdown2.markdown(text, extras=["tables", "fenced-code-blocks", "strike", "break-on-newline"])
     except: return text
 
@@ -210,8 +205,10 @@ def home():
         <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;500;700&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
         <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
         
-        <!-- Puter.js (The Magic for Free Models) -->
+        <!-- Puter.js -->
         <script src="https://js.puter.com/v2/"></script>
+        <!-- Marked.js for Client-Side Markdown -->
+        <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
 
         <style>
             :root { --bg: #050508; --header: rgba(20,20,30,0.95); --border: rgba(255,255,255,0.1); --primary: #00f2ea; --secondary: #7000ff; --text: #fff; }
@@ -368,20 +365,30 @@ def home():
             let chatHistory = [];
 
             // --- MODEL LISTS (Hybrid) ---
-            const pythonModels = ["gemini-3-flash-preview", "gemini-2.0-flash-exp", "gemini-1.5-pro", "gemini-1.5-flash", "gemma-2-27b-it", "director-mode"];
+            const pythonModels = ["gemini-3-flash-preview", "gemini-2.5-flash", "gemini-2.5-flash-lite", "gemma-3-27b-it", "director-mode"];
             
             const chatModels = [
-                {id: "gemini-3-flash-preview", name: "Gemini 3.0", tag: "⚡ GOOGLE (Server)"},
-                {id: "director-mode", name: "Director Mode", tag: "🎬 DEEP THINK"},
-                {id: "gpt-5.2-codex", name: "GPT 5.2 Codex", tag: "💻 CODING"},
+                // --- SPECIAL SERVER MODES ---
+                {id: "gemini-3-flash-preview", name: "Gemini 3.0", tag: "⚡ GOOGLE"},
+                {id: "director-mode", name: "Director Mode", tag: "🎬 DEEP"},
+                {id: "gemma-3-27b-it", name: "Gemma 3 27B", tag: "🔓 OPEN"},
+                
+                // --- PUTER.JS (OPENAI) ---
+                {id: "gpt-5.2-codex", name: "GPT 5.2 Codex", tag: "💻 CODE"},
                 {id: "gpt-5.2-pro", name: "GPT 5.2 Pro", tag: "👑 ULTIMATE"},
-                {id: "gpt-5-nano", name: "GPT-5 Nano", tag: "⚡ PUTER"},
-                {id: "o3", name: "OpenAI o3", tag: "🤯 PUTER"},
-                {id: "claude-3-5-sonnet", name: "Claude 3.5", tag: "📚 PUTER"},
-                {id: "gemini-3-pro-preview", name: "Gemini 3 Pro", tag: "🧠 PUTER (Free)"},
+                {id: "gpt-5-nano", name: "GPT-5 Nano", tag: "⚡ FAST"},
+                {id: "o3", name: "OpenAI o3", tag: "🤯 REASON"},
+                {id: "gpt-4o", name: "GPT-4o", tag: "🔥 BEST"},
+                
+                // --- PUTER.JS (GEMINI SUITE) ---
+                {id: "gemini-3-pro-preview", name: "Gemini 3 Pro", tag: "🧠 PUTER"},
                 {id: "gemini-2.5-pro", name: "Gemini 2.5 Pro", tag: "⭐ PUTER"},
+                {id: "gemini-2.5-flash-lite", name: "Gemini 2.5 Lite", tag: "⚡ PUTER"},
                 {id: "gemini-2.5-flash", name: "Gemini 2.5 Flash", tag: "⚡ PUTER"},
-                {id: "gemini-2.0-flash", name: "Gemini 2.0 Flash", tag: "⚡ PUTER"}
+                {id: "gemini-2.0-flash-lite", name: "Gemini 2.0 Lite", tag: "⚡ PUTER"},
+                
+                // --- PUTER.JS (OTHERS) ---
+                {id: "claude-3-5-sonnet", name: "Claude 3.5", tag: "📚 ANTHROPIC"}
             ];
 
             const imgModels = [
@@ -433,26 +440,30 @@ def home():
                     btn.className = 'copy-btn';
                     btn.innerHTML = '<i class="fa-regular fa-copy"></i> Copy';
                     btn.onclick = () => {
-                        navigator.clipboard.writeText(pre.querySelector('code').innerText);
-                        btn.innerHTML = '<i class="fa-solid fa-check"></i> Copied';
-                        setTimeout(()=> btn.innerHTML = '<i class="fa-regular fa-copy"></i> Copy', 2000);
+                        let code = pre.querySelector('code');
+                        if(code) {
+                            navigator.clipboard.writeText(code.innerText);
+                            btn.innerHTML = '<i class="fa-solid fa-check"></i> Copied';
+                            setTimeout(()=> btn.innerHTML = '<i class="fa-regular fa-copy"></i> Copy', 2000);
+                        }
                     };
                     pre.appendChild(btn);
                 });
             }
 
-            function addMsg(content, type) {
+            function addMsg(content, type, isHtml=false) {
                 let d = document.createElement("div");
                 d.className = "msg " + type;
                 if(typeof content === 'string') {
                     let cDiv = document.createElement("div");
-                    cDiv.innerHTML = content;
+                    if(isHtml) cDiv.innerHTML = content;
+                    else cDiv.innerText = content;
                     d.appendChild(cDiv);
-                    if(type === 'ai') addCopyBtns(cDiv); // Add buttons to new AI messages
+                    if(type === 'ai') addCopyBtns(cDiv);
                 } else d.appendChild(content);
                 
                 if (type === "ai" && typeof content === 'string') {
-                    let b = document.createElement("button"); b.className="tts-btn"; b.innerHTML="🔊"; 
+                    let b = document.createElement("button"); b.className="tts-btn"; b.innerHTML='<i class="fa-solid fa-volume-high"></i>'; 
                     b.onclick=()=>playTTS(d.innerText); d.appendChild(b);
                 }
                 
@@ -469,7 +480,6 @@ def home():
             function removeLoading() { let e=document.getElementById("load"); if(e) e.remove(); }
 
             // --- CORE LOGIC (HYBRID) ---
-            
             const txtIn = document.getElementById("prompt");
             txtIn.addEventListener("keydown", function(e) { 
                 if(e.key === "Enter" && !e.shiftKey) { 
@@ -492,12 +502,10 @@ def home():
                         let prompt = t.replace("/image", "").trim();
                         let img = await puter.ai.txt2img(prompt, { model: selectedImgModel });
                         removeLoading();
-                        
                         let div = document.createElement("div"); div.className="img-wrapper";
                         img.style.width="100%"; div.appendChild(img);
                         let dl = document.createElement("a"); dl.className="download-btn"; dl.innerHTML='<i class="fa-solid fa-download"></i>';
                         dl.href = img.src; dl.download="ai-image.png"; div.appendChild(dl);
-                        
                         addMsg(div, "ai");
                         chatHistory.push({ role: "model", parts: [{ text: "[Image Generated]" }] });
                     } catch(e) { removeLoading(); addMsg("Error: "+e, "ai"); }
@@ -506,15 +514,10 @@ def home():
 
                 addLoading();
                 
-                // HYBRID ROUTING:
+                // HYBRID ROUTING
                 if (pythonModels.includes(selectedChatModel) || selectedChatModel.includes("gemma")) {
-                    // Send to Python Backend (Uses your API Key)
-                    let p = { 
-                        prompt: t, 
-                        history: chatHistory, 
-                        model: selectedChatModel, 
-                        deep_think: (selectedChatModel === "director-mode")
-                    };
+                    // Send to Server (Markdown2)
+                    let p = { prompt: t, history: chatHistory, model: selectedChatModel, deep_think: (selectedChatModel==="director-mode") };
                     if(imgBase64) { p.image = imgBase64; imgBase64 = null; document.getElementById('previewContainer').style.display='none'; }
                     
                     chatHistory.push({ role: "user", parts: [{ text: t }] }); 
@@ -524,11 +527,11 @@ def home():
                     }).then(r=>r.json()).then(d => {
                         removeLoading();
                         chatHistory.push({ role: "model", parts: [{ text: d.text }] });
-                        addMsg(d.html || d.text, "ai"); 
+                        addMsg(d.html, "ai", true); 
                     });
                 
                 } else {
-                    // Send to Puter.js (Client Side - Free)
+                    // Send to Puter (Client)
                     try {
                         let response;
                         if (imgBase64) {
@@ -540,23 +543,10 @@ def home():
                         
                         removeLoading();
                         let text = response.message?.content || response.toString();
-                        // Parse markdown for Puter responses locally if needed, or simplistic
-                        // For Copy Code to work with Puter, we ideally need markdown parsing. 
-                        // Since we don't have a JS markdown lib loaded, we send to backend for parsing OR just display text.
-                        // To keep "Copy Code" working for Puter models, we'll do a quick fetch to backend just to parse markdown.
                         
-                        fetch("/process_text", {
-                            method: "POST", headers: {"Content-Type": "application/json"}, 
-                            body: JSON.stringify({prompt: "PARSE_ONLY", history: [], model: "GEMINI"}) # Dummy to just get parser? 
-                            # Simpler: just display text for now, or add marked.js. 
-                            # Re-using backend for consistency:
-                        });
+                        // Use Marked.js for Puter responses
+                        addMsg(marked.parse(text), "ai", true); 
                         
-                        // NOTE: For speed, we will inject text directly. 
-                        // If you want proper markdown for Puter, we'd need marked.js. 
-                        // Since we are hybrid, I'll wrap it in a pre if it looks like code, or just simple text.
-                        
-                        addMsg(text, "ai"); 
                         chatHistory.push({ role: "user", parts: [{ text: t }] });
                         chatHistory.push({ role: "model", parts: [{ text: text }] });
 
@@ -621,8 +611,7 @@ def home():
                 document.getElementById('callModal').style.display='none';
             }
             
-            // --- File Handling ---
-             function handleFile(input) {
+            function handleFile(input) {
                 if (input.files[0]) {
                     let r = new FileReader();
                     r.onload = e => {
@@ -633,7 +622,6 @@ def home():
                     r.readAsDataURL(input.files[0]);
                 }
             }
-
         </script>
     </body>
     </html>
