@@ -16,7 +16,8 @@ app = Flask(__name__)
 sock = Sock(app)
 
 # --- CONFIGURATION ---
-GEMINI_KEY = os.environ.get("GEMINI")
+# FIXED: Now looking for "GEMINI_KEY"
+GEMINI_KEY = os.environ.get("GEMINI_KEY")
 
 # --- MODEL CHAINS ---
 MODEL_CHAINS = {
@@ -261,6 +262,7 @@ def home():
             .ai code { background: rgba(0,242,234,0.1); color: var(--primary); padding: 2px 4px; border-radius: 4px; font-family: monospace; }
             .ai pre { background: rgba(0,0,0,0.5); padding: 10px; border-radius: 8px; overflow-x: auto; margin: 10px 0; }
 
+            /* TTS Button */
             .tts-btn { position: absolute; bottom: -25px; right: 0; background: rgba(255,255,255,0.1); color: #aaa; border: none; border-radius: 50%; width: 24px; height: 24px; display: flex; align-items: center; justify-content: center; cursor: pointer; font-size: 10px; transition: 0.2s; }
             .tts-btn:hover { color: var(--primary); background: rgba(0,242,234,0.1); }
 
