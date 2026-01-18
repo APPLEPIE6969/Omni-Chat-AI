@@ -5,9 +5,10 @@ import asyncio
 import requests
 import markdown2
 import io
+# import numpy as np # Keep commented out to prevent render crashes if not needed
 from flask import Flask, request, jsonify
 from flask_sock import Sock
-from gtts import gTTS  # <--- Essential for the button to work
+from gtts import gTTS
 from google import genai
 from google.genai import types
 
@@ -28,7 +29,8 @@ MODEL_CHAINS = {
         "gemma-3-27b-it",
         "gemma-3-12b-it",
         "gemma-3-4b-it",
-        "gemma-3-2b-it"
+        "gemma-3-2b-it",
+        "gemma-3-1b-it"
     ],
     "DIRECTOR": [
         "gemini-3-flash-preview",
@@ -39,7 +41,8 @@ MODEL_CHAINS = {
         "gemma-3-4b-it",
         "gemma-3-2b-it"
     ],
-    "NATIVE_AUDIO": ["gemini-2.5-flash-native-audio-dialog"]
+    "NATIVE_AUDIO": ["gemini-2.5-flash-native-audio-dialog"], 
+    "NEURAL_TTS": ["gemini-2.5-flash-tts"]
 }
 
 # --- MARKDOWN PARSING ---
@@ -75,31 +78,54 @@ def try_model_chain(chain_key, payload):
 
     return f"Error: All models failed. ({last_error})"
 
-# --- REST AI CALLER ---
-def call_ai_text(model_id, prompt, image_data=None, deep_think=False):
+# --- DIRECTOR REVIEW LOGIC ---
+def director_review_process(last_user_prompt, initial_response):
+    review_prompt = (
+        f"ORIGINAL USER PROMPT: {last_user_prompt}\n"
+        f"DRAFT RESPONSE: {initial_response}\n\n"
+        "INSTRUCTION: You are the Director. Review the draft response above. "
+        "If it is accurate and high quality, repeat it exactly. "
+        "If it has errors or bad tone, rewrite it to be perfect. "
+        "Return ONLY the final response text."
+    )
+    parts = [{ "text": review_prompt }]
+    payload = { "contents": [{ "parts": parts }] }
+    return try_model_chain("DIRECTOR", payload)
+
+# --- REST AI CALLER (With Memory) ---
+def call_ai_text(model_id, history, image_data=None, deep_think=False):
     chain_key = model_id if model_id in MODEL_CHAINS else "GEMINI"
     
-    if deep_think:
-        prompt = f"CRITICAL INSTRUCTION: Review your own answer for accuracy/tone before replying.\n\nUser: {prompt}"
-        chain_key = "DIRECTOR" 
-
-    parts = [{ "text": prompt }]
+    # Check for image and attach to last message
     if image_data:
-        parts.append({ "inline_data": { "mime_type": "image/jpeg", "data": image_data } })
-    
-    payload = { "contents": [{ "parts": parts }] }
-    
-    return try_model_chain(chain_key, payload)
+        if history and history[-1]['role'] == 'user':
+            history[-1]['parts'].append({ "inline_data": { "mime_type": "image/jpeg", "data": image_data } })
 
-# --- HELPER: GTTS GENERATION (FIXED) ---
+    payload = { 
+        "contents": history,
+        "system_instruction": {
+            "parts": [{"text": "You are Omni-Chat, a helpful, intelligent assistant. You have access to Gemini 3.0 and Gemma 3 models."}]
+        }
+    }
+    
+    response_text = try_model_chain(chain_key, payload)
+    
+    if deep_think and not response_text.startswith("Error:"):
+        last_prompt = "User Input"
+        try:
+            last_prompt = history[-1]['parts'][0]['text']
+        except: pass
+        response_text = director_review_process(last_prompt, response_text)
+    
+    return response_text
+
+# --- HELPER: GTTS GENERATION ---
 @app.route('/generate_tts', methods=['POST'])
 def generate_tts():
     text = request.json.get('text')
     if not text: return jsonify({"error": "No text"}), 400
 
     try:
-        # We use gTTS library instead of Gemini API for the button
-        # This is much faster and more reliable for reading text bubbles
         tts = gTTS(text=text, lang='en')
         fp = io.BytesIO()
         tts.write_to_fp(fp)
@@ -109,10 +135,13 @@ def generate_tts():
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
-# --- WEBSOCKET LIVE CALL (Google GenAI SDK) ---
+# --- WEBSOCKET LIVE CALL ---
 @sock.route('/ws/live')
 def live_socket(ws):
     client = genai.Client(api_key=GEMINI_KEY, http_options={'api_version': 'v1alpha'})
+    
+    # 2.0 Flash Exp is required for SDK Live Streaming currently
+    LIVE_MODEL = "gemini-2.0-flash-exp"
     
     config = types.LiveConnectConfig(
         response_modalities=["AUDIO"], 
@@ -121,11 +150,8 @@ def live_socket(ws):
     
     async def session_loop():
         try:
-            # We grab the first model from the NATIVE_AUDIO chain
-            target_model = MODEL_CHAINS["NATIVE_AUDIO"][0]
-            
-            async with client.aio.live.connect(model=target_model, config=config) as session:
-                print(f">> Connected to {target_model}")
+            async with client.aio.live.connect(model=LIVE_MODEL, config=config) as session:
+                print(">> Connected to Gemini Live")
                 
                 async def send_audio():
                     while True:
@@ -147,10 +173,13 @@ def live_socket(ws):
                                 for part in response.server_content.model_turn.parts:
                                     if part.inline_data:
                                         payload["audio"] = base64.b64encode(part.inline_data.data).decode('utf-8')
+                            
                             if response.server_content and response.server_content.output_transcription:
                                 payload["text"] = response.server_content.output_transcription.text
+
                             if payload:
                                 await asyncio.to_thread(ws.send, json.dumps(payload))
+
                 await asyncio.gather(send_audio(), receive_response())
         except Exception as e:
             print(f"WS Error: {e}")
@@ -206,21 +235,16 @@ def home():
             .img-prev { max-width: 100%; border-radius: 10px; margin-top: 5px; display: block; }
             @keyframes pop { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
 
-            /* LOADING INDICATOR */
-            .loading { display: flex; align-items: center; gap: 8px; color: #aaa; font-style: italic; padding: 10px 16px; }
-            .spinner { width: 12px; height: 12px; border: 2px solid var(--primary); border-top-color: transparent; border-radius: 50%; animation: spin 1s linear infinite; }
+            /* LOADING INDICATOR (Restored) */
+            .loading { display: flex; align-items: center; gap: 8px; color: #aaa; font-style: italic; padding: 10px 16px; background: transparent; border: none; }
+            .spinner { width: 14px; height: 14px; border: 2px solid var(--primary); border-top-color: transparent; border-radius: 50%; animation: spin 1s linear infinite; }
             @keyframes spin { to { transform: rotate(360deg); } }
 
             .ai p { margin: 5px 0; }
             .ai code { background: rgba(0,242,234,0.1); color: var(--primary); padding: 2px 4px; border-radius: 4px; font-family: monospace; }
             .ai pre { background: rgba(0,0,0,0.5); padding: 10px; border-radius: 8px; overflow-x: auto; margin: 10px 0; }
 
-            /* TTS Button */
-            .tts-btn {
-                position: absolute; bottom: -25px; right: 0; background: rgba(255,255,255,0.1); 
-                color: #aaa; border: none; border-radius: 50%; width: 24px; height: 24px;
-                display: flex; align-items: center; justify-content: center; cursor: pointer; font-size: 10px; transition: 0.2s;
-            }
+            .tts-btn { position: absolute; bottom: -25px; right: 0; background: rgba(255,255,255,0.1); color: #aaa; border: none; border-radius: 50%; width: 24px; height: 24px; display: flex; align-items: center; justify-content: center; cursor: pointer; font-size: 10px; transition: 0.2s; }
             .tts-btn:hover { color: var(--primary); background: rgba(0,242,234,0.1); }
 
             .input-area { padding: 15px; background: var(--header); border-top: 1px solid var(--border); display: flex; gap: 10px; align-items: flex-end; padding-bottom: max(15px, env(safe-area-inset-bottom)); }
@@ -232,7 +256,6 @@ def home():
             .icon-btn:hover { color: var(--primary); border-color: var(--primary); }
             .send-btn { background: var(--primary); color: #000; border: none; }
 
-            /* LIVE CALL MODAL */
             .call-modal { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(5,5,8,0.95); z-index: 100; display: none; flex-direction: column; align-items: center; justify-content: center; backdrop-filter: blur(10px); animation: fadeIn 0.3s ease; }
             .call-status { font-size: 24px; font-weight: 700; color: #fff; margin-bottom: 10px; }
             .call-subtitle { font-size: 14px; color: #aaa; margin-bottom: 30px; text-align: center; max-width: 80%; }
@@ -250,7 +273,6 @@ def home():
             #fileInput, #previewContainer { display: none; }
             #previewContainer { position: absolute; bottom: 60px; left: 15px; }
             #imageUploadPreview { width: 60px; height: 60px; border-radius: 10px; object-fit: cover; border: 2px solid var(--primary); }
-
         </style>
     </head>
     <body>
@@ -313,6 +335,9 @@ def home():
             let audioContext = null;
             let audioQueue = [];
             let isPlaying = false;
+            
+            // CONVERSATION HISTORY
+            let chatHistory = [];
 
             function setMod(m) {
                 currMod = m;
@@ -347,7 +372,7 @@ def home():
                 c.scrollTop = c.scrollHeight;
             }
 
-            // LOADING UI LOGIC
+            // LOADING UI
             function addLoading() {
                 let d = document.createElement("div");
                 d.className = "msg ai loading";
@@ -383,11 +408,19 @@ def home():
                 let t = txtIn.value.trim();
                 if(!t && !imgBase64) return;
                 
+                // Update History
+                chatHistory.push({ role: "user", parts: [{ text: t }] });
+                
                 addMsg(t, "user");
                 txtIn.value = "";
                 txtIn.style.height = "48px";
                 
-                let p = { prompt: t, model: currMod, deep_think: dtEnabled };
+                let p = { 
+                    prompt: t, 
+                    history: chatHistory, 
+                    model: currMod, 
+                    deep_think: dtEnabled 
+                };
                 if(imgBase64) { p.image = imgBase64; imgBase64 = null; document.getElementById('previewContainer').style.display='none'; }
 
                 addLoading();
@@ -396,6 +429,10 @@ def home():
                     method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(p)
                 }).then(r=>r.json()).then(d => {
                     removeLoading();
+                    
+                    // Update History (AI)
+                    chatHistory.push({ role: "model", parts: [{ text: d.text }] });
+                    
                     addMsg(d.html || d.text, "ai", true);
                 });
             }
@@ -506,12 +543,17 @@ def home():
 @app.route('/process_text', methods=['POST'])
 def process_text():
     data = request.json
-    p = data.get('prompt')
+    
+    history = data.get('history', [])
+    prompt = data.get('prompt')
     m = data.get('model')
     dt = data.get('deep_think')
     img = data.get('image')
     
-    text_res = call_ai_text(m, p, img, dt)
+    if not history:
+        history = [{"role": "user", "parts": [{"text": prompt}]}]
+    
+    text_res = call_ai_text(m, history, img, dt)
     html = parse_markdown(text_res)
     return jsonify({"text": text_res, "html": html})
 
