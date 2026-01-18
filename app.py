@@ -5,7 +5,7 @@ import asyncio
 import requests
 import markdown2
 import io
-# import numpy as np # Keep commented unless strictly needed to prevent render memory issues
+import numpy as np
 from flask import Flask, request, jsonify
 from flask_sock import Sock
 from gtts import gTTS
@@ -41,7 +41,8 @@ MODEL_CHAINS = {
         "gemma-3-4b-it",
         "gemma-3-2b-it"
     ],
-    "NATIVE_AUDIO": ["gemini-2.5-flash-native-audio-dialog"], 
+    # Native Audio requires 2.0-Flash-Exp for reliable WebSocket streaming
+    "NATIVE_AUDIO": ["gemini-2.0-flash-exp"], 
     "NEURAL_TTS": ["gemini-2.5-flash-tts"]
 }
 
@@ -141,8 +142,7 @@ def generate_tts():
 def live_socket(ws):
     client = genai.Client(api_key=GEMINI_KEY, http_options={'api_version': 'v1alpha'})
     
-    # 2.0 Flash Exp is required for SDK Live Streaming
-    LIVE_MODEL = "gemini-2.0-flash-exp"
+    LIVE_MODEL = MODEL_CHAINS["NATIVE_AUDIO"][0]
     
     config = types.LiveConnectConfig(
         response_modalities=["AUDIO"], 
@@ -203,7 +203,6 @@ def home():
         <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
         <meta name="theme-color" content="#050508">
         
-        <!-- Fonts & Icons -->
         <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;500;700&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
         <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
         
@@ -243,7 +242,7 @@ def home():
             .ai img { max-width: 100%; border-radius: 10px; margin-top: 10px; box-shadow: 0 5px 15px rgba(0,0,0,0.5); }
             @keyframes pop { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
 
-            /* LOADING INDICATOR */
+            /* LOADING SPINNER */
             .loading { display: flex; align-items: center; gap: 8px; color: #aaa; font-style: italic; padding: 10px 16px; background: transparent; border: none; }
             .spinner { width: 14px; height: 14px; border: 2px solid var(--primary); border-top-color: transparent; border-radius: 50%; animation: spin 1s linear infinite; }
             @keyframes spin { to { transform: rotate(360deg); } }
@@ -252,7 +251,6 @@ def home():
             .ai code { background: rgba(0,242,234,0.1); color: var(--primary); padding: 2px 4px; border-radius: 4px; font-family: monospace; }
             .ai pre { background: rgba(0,0,0,0.5); padding: 10px; border-radius: 8px; overflow-x: auto; margin: 10px 0; }
 
-            /* TTS Button */
             .tts-btn { position: absolute; bottom: -25px; right: 0; background: rgba(255,255,255,0.1); color: #aaa; border: none; border-radius: 50%; width: 24px; height: 24px; display: flex; align-items: center; justify-content: center; cursor: pointer; font-size: 10px; transition: 0.2s; }
             .tts-btn:hover { color: var(--primary); background: rgba(0,242,234,0.1); }
 
@@ -280,10 +278,21 @@ def home():
             .mute-btn.active { background: #fff; color: #000; }
             .end-btn { background: #ff0055; color: #fff; transform: scale(1.1); }
 
+            /* IMAGE SETTINGS MODAL */
+            .img-modal { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.8); z-index: 200; display: none; align-items: center; justify-content: center; backdrop-filter: blur(5px); }
+            .img-content { background: #1a1a20; border: 1px solid var(--border); border-radius: 20px; padding: 20px; width: 90%; max-width: 400px; max-height: 80vh; overflow-y: auto; display: flex; flex-direction: column; gap: 10px; }
+            .img-item { padding: 12px; border-radius: 12px; background: rgba(255,255,255,0.05); border: 1px solid transparent; cursor: pointer; display: flex; justify-content: space-between; align-items: center; }
+            .img-item:hover { border-color: var(--primary); background: rgba(0,242,234,0.05); }
+            .img-item.selected { background: rgba(0,242,234,0.15); border-color: var(--primary); }
+            .img-name { font-weight: 600; font-size: 14px; }
+            .img-tag { font-size: 10px; padding: 2px 6px; border-radius: 4px; background: #333; color: #aaa; text-transform: uppercase; }
+            .img-tag.fast { color: #00ff00; background: rgba(0,255,0,0.1); }
+            .img-tag.best { color: #ffd700; background: rgba(255,215,0,0.1); }
+            .close-btn { align-self: flex-end; cursor: pointer; color: #aaa; font-size: 20px; margin-bottom: 5px; }
+
             #fileInput, #previewContainer { display: none; }
             #previewContainer { position: absolute; bottom: 60px; left: 15px; }
             #imageUploadPreview { width: 60px; height: 60px; border-radius: 10px; object-fit: cover; border: 2px solid var(--primary); }
-
         </style>
     </head>
     <body>
@@ -304,14 +313,14 @@ def home():
         </div>
 
         <div class="chat" id="chat">
-            <div class="msg ai">Online. Click 🎨 for Images.</div>
+            <div class="msg ai">Online. Click 🎨 for Image Settings.</div>
         </div>
 
         <div class="input-area">
             <input type="file" id="fileInput" accept="image/*" onchange="handleFile(this)">
             <div id="previewContainer"><img id="imageUploadPreview"></div>
 
-            <button class="icon-btn" onclick="triggerImageGen()"><i class="fa-solid fa-palette"></i></button>
+            <button class="icon-btn" onclick="openImgSettings()"><i class="fa-solid fa-palette"></i></button>
             <button class="icon-btn" onclick="document.getElementById('fileInput').click()"><i class="fa-solid fa-paperclip"></i></button>
             
             <div class="txt-box">
@@ -320,6 +329,17 @@ def home():
 
             <button class="icon-btn" onclick="startLiveCall()"><i class="fa-solid fa-microphone"></i></button>
             <button class="icon-btn send-btn" onclick="sendText()"><i class="fa-solid fa-arrow-up"></i></button>
+        </div>
+
+        <!-- IMAGE SETTINGS MODAL -->
+        <div class="img-modal" id="imgModal">
+            <div class="img-content">
+                <div style="display:flex; justify-content:space-between; align-items:center;">
+                    <h3>Select Image Model</h3>
+                    <div class="close-btn" onclick="closeImgSettings()">&times;</div>
+                </div>
+                <div id="modelList"></div>
+            </div>
         </div>
 
         <!-- LIVE CALL MODAL -->
@@ -342,12 +362,46 @@ def home():
             let currMod = 'GEMINI';
             let dtEnabled = false;
             let imgBase64 = null;
-            let mediaRecorder = null;
-            let ws = null;
-            let audioContext = null;
-            let audioQueue = [];
-            let isPlaying = false;
             let chatHistory = [];
+            
+            // Image Gen Settings
+            let selectedImgModel = "black-forest-labs/FLUX.1-schnell";
+            const imgModels = [
+                {id: "black-forest-labs/FLUX.1-schnell", name: "Flux.1 Schnell", tag: "🚀 FAST"},
+                {id: "black-forest-labs/FLUX.1.1-pro", name: "Flux 1.1 Pro", tag: "⭐ BEST"},
+                {id: "ideogram/ideogram-3.0", name: "Ideogram 3.0", tag: "🔤 TEXT"},
+                {id: "dall-e-3", name: "DALL-E 3", tag: "🧠 SMART"},
+                {id: "google/imagen-4.0-ultra", name: "Imagen 4 Ultra", tag: "⭐ BEST"},
+                {id: "stabilityai/stable-diffusion-3-medium", name: "SD 3 Medium", tag: "🎨 ART"},
+                {id: "google/flash-image-2.5", name: "Gemini 2.5 Flash", tag: "⚡ GOOGLE"},
+                {id: "black-forest-labs/FLUX.1-dev", name: "Flux Dev", tag: "🛠 DEV"},
+                {id: "RunDiffusion/Juggernaut-pro-flux", name: "Juggernaut Pro", tag: "📸 REAL"},
+                {id: "gpt-image-1", name: "GPT Image", tag: "🤖 GPT"}
+            ];
+
+            // Setup Image Modal
+            const modelList = document.getElementById("modelList");
+            imgModels.forEach(m => {
+                let div = document.createElement("div");
+                div.className = `img-item ${m.id === selectedImgModel ? 'selected' : ''}`;
+                div.onclick = () => selectImgModel(m.id, div);
+                
+                let tagClass = m.tag.includes("FAST") ? "fast" : m.tag.includes("BEST") ? "best" : "";
+                
+                div.innerHTML = `<span class="img-name">${m.name}</span> <span class="img-tag ${tagClass}">${m.tag}</span>`;
+                modelList.appendChild(div);
+            });
+
+            function openImgSettings() { document.getElementById("imgModal").style.display = "flex"; }
+            function closeImgSettings() { document.getElementById("imgModal").style.display = "none"; }
+            
+            function selectImgModel(id, el) {
+                selectedImgModel = id;
+                document.querySelectorAll(".img-item").forEach(i => i.classList.remove("selected"));
+                el.classList.add("selected");
+                closeImgSettings();
+                addMsg(`🎨 Selected Model: ${id.split('/')[1] || id}`, "ai");
+            }
 
             function setMod(m) {
                 currMod = m;
@@ -378,37 +432,12 @@ def home():
                         d.appendChild(btn);
                     }
                 } else {
-                    // Content is an Element (like an Image)
                     d.appendChild(content);
                 }
 
                 let c = document.getElementById("chat");
                 c.appendChild(d);
                 c.scrollTop = c.scrollHeight;
-            }
-
-            // --- IMAGE GENERATION (PUTER) ---
-            async function triggerImageGen() {
-                let p = document.getElementById("prompt").value;
-                if(!p) { alert("Please type a description for the image first."); return; }
-                
-                addMsg("🎨 Generating Image: " + p, "user");
-                document.getElementById("prompt").value = "";
-                addLoading();
-                
-                try {
-                    // Use Flux.1 Schnell via Puter.js
-                    const imgElement = await puter.ai.txt2img(p, { model: 'black-forest-labs/FLUX.1-schnell' });
-                    removeLoading();
-                    
-                    // Puter returns an IMG element directly
-                    addMsg(imgElement, "ai");
-                    chatHistory.push({ role: "model", parts: [{ text: "[Generated an Image]" }] });
-                    
-                } catch (err) {
-                    removeLoading();
-                    addMsg("Image Generation Failed: " + err, "ai");
-                }
             }
 
             // LOADING UI
@@ -443,14 +472,30 @@ def home():
             txtIn.addEventListener("input", function() { this.style.height = "auto"; this.style.height = this.scrollHeight + "px"; });
             txtIn.addEventListener("keydown", function(e) { if(e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendText(); } });
 
-            function sendText() {
+            async function sendText() {
                 let t = txtIn.value.trim();
                 if(!t && !imgBase64) return;
                 
-                chatHistory.push({ role: "user", parts: [{ text: t }] });
                 addMsg(t, "user");
                 txtIn.value = "";
                 txtIn.style.height = "48px";
+
+                // Check if user wants image generation
+                if(t.toLowerCase().startsWith("/image") || t.toLowerCase().startsWith("generate image")) {
+                    addLoading();
+                    try {
+                        const imgEl = await puter.ai.txt2img(t.replace("/image", ""), { model: selectedImgModel });
+                        removeLoading();
+                        addMsg(imgEl, "ai");
+                        chatHistory.push({ role: "model", parts: [{ text: "[Image Generated]" }] });
+                    } catch(e) {
+                        removeLoading();
+                        addMsg("Image Gen Error: " + e, "ai");
+                    }
+                    return;
+                }
+                
+                chatHistory.push({ role: "user", parts: [{ text: t }] });
                 
                 let p = { 
                     prompt: t, 
@@ -484,6 +529,13 @@ def home():
             }
 
             // --- LIVE CALL LOGIC ---
+            // Live Call Variables
+            let mediaRecorder = null;
+            let ws = null;
+            let audioContext = null;
+            let audioQueue = [];
+            let isPlaying = false;
+
             async function startLiveCall() {
                 document.getElementById('callModal').style.display = 'flex';
                 document.getElementById('callStatus').innerText = "Connecting...";
