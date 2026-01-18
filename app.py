@@ -5,7 +5,7 @@ import asyncio
 import requests
 import markdown2
 import io
-import numpy as np
+# import numpy as np # Keep commented unless strictly needed to prevent render memory issues
 from flask import Flask, request, jsonify
 from flask_sock import Sock
 from gtts import gTTS
@@ -18,37 +18,30 @@ sock = Sock(app)
 # --- CONFIGURATION ---
 GEMINI_KEY = os.environ.get("GEMINI")
 
-# --- MODEL CHAINS (Fixed Gemma) ---
+# --- MODEL CHAINS ---
 MODEL_CHAINS = {
     "GEMINI": [
         "gemini-3-flash-preview", 
-        "gemini-2.0-flash-exp",
         "gemini-2.5-flash",
         "gemini-2.5-flash-lite"
     ],
     "GEMMA": [
-        # --- YOUR REQUESTED MODELS (Try these first) ---
         "gemma-3-27b-it",
         "gemma-3-12b-it",
         "gemma-3-4b-it",
         "gemma-3-2b-it",
-        "gemma-3-1b-it",
-        
-        # --- STABLE FALLBACKS (If Gemma 3 isn't live yet) ---
-        "gemma-2-27b-it",
-        "gemma-2-9b-it",
-        "gemma-2-2b-it",
-        
-        # --- FINAL SAFETY NET (So it never crashes) ---
-        "gemini-2.0-flash-lite-preview"
+        "gemma-3-1b-it"
     ],
     "DIRECTOR": [
         "gemini-3-flash-preview",
         "gemini-2.5-flash",
         "gemini-2.5-flash-lite",
-        "gemma-3-27b-it"
+        "gemma-3-27b-it",
+        "gemma-3-12b-it",
+        "gemma-3-4b-it",
+        "gemma-3-2b-it"
     ],
-    "NATIVE_AUDIO": ["gemini-2.0-flash-exp"], 
+    "NATIVE_AUDIO": ["gemini-2.5-flash-native-audio-dialog"], 
     "NEURAL_TTS": ["gemini-2.5-flash-tts"]
 }
 
@@ -67,22 +60,18 @@ def try_model_chain(chain_key, payload):
         url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={GEMINI_KEY}"
         try:
             r = requests.post(url, json=payload)
-            
-            # Check for HTTP Errors (404, 500, 429)
             if r.status_code != 200:
                 print(f"⚠️ {model} Failed ({r.status_code}). Switching...")
                 continue
             
             data = r.json()
-            
-            # Check for API Errors (Model not found, etc)
-            if "error" in data:
-                print(f"⚠️ {model} API Error: {data['error'].get('message')}")
-                continue
-
             if "candidates" in data and len(data["candidates"]) > 0:
                 return data["candidates"][0]["content"]["parts"][0]["text"]
             
+            if "error" in data:
+                print(f"⚠️ {model} API Error. Switching...")
+                continue
+                
         except Exception as e:
             last_error = str(e)
             continue
@@ -213,8 +202,14 @@ def home():
         <title>Omni-Chat Live</title>
         <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
         <meta name="theme-color" content="#050508">
+        
+        <!-- Fonts & Icons -->
         <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;500;700&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
         <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+        
+        <!-- Puter.js for Image Generation -->
+        <script src="https://js.puter.com/v2/"></script>
+
         <style>
             :root { --bg: #050508; --header: rgba(20,20,30,0.95); --border: rgba(255,255,255,0.1); --primary: #00f2ea; --secondary: #7000ff; --text: #fff; }
             * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
@@ -245,6 +240,7 @@ def home():
             .user { align-self: flex-end; background: linear-gradient(135deg, var(--primary), #00a8a2); color: #000; font-weight: 500; border-bottom-right-radius: 4px; }
             .ai { align-self: flex-start; background: rgba(255,255,255,0.05); border: 1px solid var(--border); border-bottom-left-radius: 4px; }
             .img-prev { max-width: 100%; border-radius: 10px; margin-top: 5px; display: block; }
+            .ai img { max-width: 100%; border-radius: 10px; margin-top: 10px; box-shadow: 0 5px 15px rgba(0,0,0,0.5); }
             @keyframes pop { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
 
             /* LOADING INDICATOR */
@@ -256,6 +252,7 @@ def home():
             .ai code { background: rgba(0,242,234,0.1); color: var(--primary); padding: 2px 4px; border-radius: 4px; font-family: monospace; }
             .ai pre { background: rgba(0,0,0,0.5); padding: 10px; border-radius: 8px; overflow-x: auto; margin: 10px 0; }
 
+            /* TTS Button */
             .tts-btn { position: absolute; bottom: -25px; right: 0; background: rgba(255,255,255,0.1); color: #aaa; border: none; border-radius: 50%; width: 24px; height: 24px; display: flex; align-items: center; justify-content: center; cursor: pointer; font-size: 10px; transition: 0.2s; }
             .tts-btn:hover { color: var(--primary); background: rgba(0,242,234,0.1); }
 
@@ -268,6 +265,7 @@ def home():
             .icon-btn:hover { color: var(--primary); border-color: var(--primary); }
             .send-btn { background: var(--primary); color: #000; border: none; }
 
+            /* LIVE CALL MODAL */
             .call-modal { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(5,5,8,0.95); z-index: 100; display: none; flex-direction: column; align-items: center; justify-content: center; backdrop-filter: blur(10px); animation: fadeIn 0.3s ease; }
             .call-status { font-size: 24px; font-weight: 700; color: #fff; margin-bottom: 10px; }
             .call-subtitle { font-size: 14px; color: #aaa; margin-bottom: 30px; text-align: center; max-width: 80%; }
@@ -306,13 +304,14 @@ def home():
         </div>
 
         <div class="chat" id="chat">
-            <div class="msg ai">Online. Click the mic for Live Call.</div>
+            <div class="msg ai">Online. Click 🎨 for Images.</div>
         </div>
 
         <div class="input-area">
             <input type="file" id="fileInput" accept="image/*" onchange="handleFile(this)">
             <div id="previewContainer"><img id="imageUploadPreview"></div>
 
+            <button class="icon-btn" onclick="triggerImageGen()"><i class="fa-solid fa-palette"></i></button>
             <button class="icon-btn" onclick="document.getElementById('fileInput').click()"><i class="fa-solid fa-paperclip"></i></button>
             
             <div class="txt-box">
@@ -323,6 +322,7 @@ def home():
             <button class="icon-btn send-btn" onclick="sendText()"><i class="fa-solid fa-arrow-up"></i></button>
         </div>
 
+        <!-- LIVE CALL MODAL -->
         <div class="call-modal" id="callModal">
             <div class="call-status" id="callStatus">Connecting...</div>
             <div class="call-subtitle" id="callSub"></div>
@@ -347,8 +347,6 @@ def home():
             let audioContext = null;
             let audioQueue = [];
             let isPlaying = false;
-            
-            // CONVERSATION HISTORY
             let chatHistory = [];
 
             function setMod(m) {
@@ -363,20 +361,25 @@ def home():
                 document.getElementById('dtCheck').style.display = dtEnabled ? 'block' : 'none';
             }
 
-            function addMsg(txt, type, isHtml=false, isLive=false) {
+            function addMsg(content, type, isHtml=false, isLive=false) {
                 let d = document.createElement("div");
                 d.className = "msg " + type;
                 
-                let contentDiv = document.createElement("div");
-                if(isHtml) contentDiv.innerHTML = txt; else contentDiv.innerText = txt;
-                d.appendChild(contentDiv);
-
-                if (type === "ai" && !isLive) {
-                    let btn = document.createElement("button");
-                    btn.className = "tts-btn";
-                    btn.innerHTML = '<i class="fa-solid fa-volume-high"></i>';
-                    btn.onclick = () => playTTS(contentDiv.innerText);
-                    d.appendChild(btn);
+                if(typeof content === 'string') {
+                    let contentDiv = document.createElement("div");
+                    if(isHtml) contentDiv.innerHTML = content; else contentDiv.innerText = content;
+                    d.appendChild(contentDiv);
+                    
+                    if (type === "ai" && !isLive) {
+                        let btn = document.createElement("button");
+                        btn.className = "tts-btn";
+                        btn.innerHTML = '<i class="fa-solid fa-volume-high"></i>';
+                        btn.onclick = () => playTTS(contentDiv.innerText);
+                        d.appendChild(btn);
+                    }
+                } else {
+                    // Content is an Element (like an Image)
+                    d.appendChild(content);
                 }
 
                 let c = document.getElementById("chat");
@@ -384,7 +387,31 @@ def home():
                 c.scrollTop = c.scrollHeight;
             }
 
-            // LOADING UI LOGIC
+            // --- IMAGE GENERATION (PUTER) ---
+            async function triggerImageGen() {
+                let p = document.getElementById("prompt").value;
+                if(!p) { alert("Please type a description for the image first."); return; }
+                
+                addMsg("🎨 Generating Image: " + p, "user");
+                document.getElementById("prompt").value = "";
+                addLoading();
+                
+                try {
+                    // Use Flux.1 Schnell via Puter.js
+                    const imgElement = await puter.ai.txt2img(p, { model: 'black-forest-labs/FLUX.1-schnell' });
+                    removeLoading();
+                    
+                    // Puter returns an IMG element directly
+                    addMsg(imgElement, "ai");
+                    chatHistory.push({ role: "model", parts: [{ text: "[Generated an Image]" }] });
+                    
+                } catch (err) {
+                    removeLoading();
+                    addMsg("Image Generation Failed: " + err, "ai");
+                }
+            }
+
+            // LOADING UI
             function addLoading() {
                 let d = document.createElement("div");
                 d.className = "msg ai loading";
@@ -420,9 +447,7 @@ def home():
                 let t = txtIn.value.trim();
                 if(!t && !imgBase64) return;
                 
-                // Update History (User)
                 chatHistory.push({ role: "user", parts: [{ text: t }] });
-                
                 addMsg(t, "user");
                 txtIn.value = "";
                 txtIn.style.height = "48px";
@@ -441,10 +466,7 @@ def home():
                     method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(p)
                 }).then(r=>r.json()).then(d => {
                     removeLoading();
-                    
-                    // Update History (AI)
                     chatHistory.push({ role: "model", parts: [{ text: d.text }] });
-                    
                     addMsg(d.html || d.text, "ai", true);
                 });
             }
