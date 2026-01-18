@@ -41,7 +41,6 @@ MODEL_CHAINS = {
         "gemma-3-4b-it",
         "gemma-3-2b-it"
     ],
-    # Native Audio requires 2.0-Flash-Exp for reliable WebSocket streaming
     "NATIVE_AUDIO": ["gemini-2.0-flash-exp"], 
     "NEURAL_TTS": ["gemini-2.5-flash-tts"]
 }
@@ -205,7 +204,7 @@ def home():
         <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;500;700&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
         <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
         
-        <!-- Puter.js for Image Generation -->
+        <!-- Puter.js -->
         <script src="https://js.puter.com/v2/"></script>
 
         <style>
@@ -237,8 +236,20 @@ def home():
             .msg { max-width: 85%; padding: 12px 16px; border-radius: 18px; font-size: 15px; line-height: 1.5; word-wrap: break-word; animation: pop 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275); position: relative; }
             .user { align-self: flex-end; background: linear-gradient(135deg, var(--primary), #00a8a2); color: #000; font-weight: 500; border-bottom-right-radius: 4px; }
             .ai { align-self: flex-start; background: rgba(255,255,255,0.05); border: 1px solid var(--border); border-bottom-left-radius: 4px; }
+            
+            /* IMAGE STYLES */
+            .img-wrapper { position: relative; display: inline-block; max-width: 100%; border-radius: 12px; overflow: hidden; margin-top: 10px; box-shadow: 0 5px 20px rgba(0,0,0,0.4); }
+            .img-wrapper img { width: 100%; height: auto; display: block; }
+            .download-btn {
+                position: absolute; bottom: 8px; right: 8px;
+                background: rgba(0,0,0,0.6); color: white; border: 1px solid rgba(255,255,255,0.2);
+                width: 32px; height: 32px; border-radius: 8px;
+                display: flex; align-items: center; justify-content: center;
+                cursor: pointer; transition: 0.2s; text-decoration: none; backdrop-filter: blur(4px);
+            }
+            .download-btn:hover { background: var(--primary); color: black; border-color: var(--primary); }
+
             .img-prev { max-width: 100%; border-radius: 10px; margin-top: 5px; display: block; }
-            .ai img { max-width: 100%; border-radius: 10px; margin-top: 10px; box-shadow: 0 5px 15px rgba(0,0,0,0.5); }
             @keyframes pop { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
 
             /* LOADING SPINNER */
@@ -250,7 +261,6 @@ def home():
             .ai code { background: rgba(0,242,234,0.1); color: var(--primary); padding: 2px 4px; border-radius: 4px; font-family: monospace; }
             .ai pre { background: rgba(0,0,0,0.5); padding: 10px; border-radius: 8px; overflow-x: auto; margin: 10px 0; }
 
-            /* TTS Button */
             .tts-btn { position: absolute; bottom: -25px; right: 0; background: rgba(255,255,255,0.1); color: #aaa; border: none; border-radius: 50%; width: 24px; height: 24px; display: flex; align-items: center; justify-content: center; cursor: pointer; font-size: 10px; transition: 0.2s; }
             .tts-btn:hover { color: var(--primary); background: rgba(0,242,234,0.1); }
 
@@ -415,6 +425,19 @@ def home():
                 document.getElementById('dtCheck').style.display = dtEnabled ? 'block' : 'none';
             }
 
+            function createImgContainer(img) {
+                let div = document.createElement("div");
+                div.className = "img-wrapper";
+                img.style.maxWidth = "100%"; img.style.height = "auto"; img.style.borderRadius = "10px";
+                div.appendChild(img);
+                
+                let btn = document.createElement("a");
+                btn.href = img.src; btn.download = "generated-image-" + Date.now() + ".png";
+                btn.className = "download-btn"; btn.innerHTML = '<i class="fa-solid fa-download"></i>';
+                div.appendChild(btn);
+                return div;
+            }
+
             function addMsg(content, type, isHtml=false, isLive=false) {
                 let d = document.createElement("div");
                 d.className = "msg " + type;
@@ -432,7 +455,12 @@ def home():
                         d.appendChild(btn);
                     }
                 } else {
-                    d.appendChild(content);
+                    // It's an element (image)
+                    if (content.tagName === 'IMG') {
+                        d.appendChild(createImgContainer(content));
+                    } else {
+                        d.appendChild(content);
+                    }
                 }
 
                 let c = document.getElementById("chat");
@@ -472,27 +500,19 @@ def home():
             txtIn.addEventListener("input", function() { this.style.height = "auto"; this.style.height = this.scrollHeight + "px"; });
             txtIn.addEventListener("keydown", function(e) { if(e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendText(); } });
 
-            // SMART IMAGE GENERATION DETECTION
             async function sendText() {
                 let t = txtIn.value.trim();
                 if(!t && !imgBase64) return;
                 
-                // Clear Input UI immediately
-                txtIn.value = "";
-                txtIn.style.height = "48px";
-                let imgToSend = imgBase64;
-                imgBase64 = null;
-                document.getElementById('previewContainer').style.display='none';
-
                 // Check for Image Generation Intent
                 const imageRegex = /(?:generate|create|make|draw)\s+(?:an?\s+)?(?:image|picture|photo|painting|art)|^\/image/i;
                 
                 if (imageRegex.test(t)) {
-                    addMsg(t, "user"); // Show user prompt
+                    addMsg(t, "user"); 
+                    txtIn.value = ""; txtIn.style.height = "48px";
                     addLoading();
                     try {
-                        const cleanPrompt = t.replace(/^\/image/, '').replace(/generate a image/i, '').trim();
-                        // Call Puter.js
+                        const cleanPrompt = t.replace(/^\/image/, '').replace(/generate a image/i, 'generate an image').trim();
                         const imgEl = await puter.ai.txt2img(cleanPrompt || t, { model: selectedImgModel });
                         removeLoading();
                         addMsg(imgEl, "ai");
@@ -501,11 +521,12 @@ def home():
                         removeLoading();
                         addMsg("Image Gen Error: " + e, "ai");
                     }
-                    return; // Stop here, don't send to LLM
+                    return; 
                 }
                 
-                // Normal Text Chat
+                // Normal Chat
                 addMsg(t, "user");
+                txtIn.value = ""; txtIn.style.height = "48px";
                 chatHistory.push({ role: "user", parts: [{ text: t }] });
                 
                 let p = { 
@@ -514,7 +535,7 @@ def home():
                     model: currMod, 
                     deep_think: dtEnabled 
                 };
-                if(imgToSend) { p.image = imgToSend; }
+                if(imgBase64) { p.image = imgBase64; imgBase64 = null; document.getElementById('previewContainer').style.display='none'; }
 
                 addLoading();
 
