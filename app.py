@@ -20,6 +20,7 @@ sock = Sock(app)
 GEMINI_KEY = os.environ.get("GEMINI_KEY")
 
 # --- SERVER-SIDE CONFIG ---
+# Kept for Live Audio / TTS
 MODEL_CHAINS = {
     "NATIVE_AUDIO": ["gemini-2.0-flash-exp"], 
     "NEURAL_TTS": ["gemini-2.5-flash-tts"]
@@ -82,6 +83,7 @@ def live_socket(ws):
 def process_text():
     # Only used if we need server-side parsing, mostly client-side now
     data = request.json
+    # Return raw text so client-side marked.js handles it, or parse here if needed
     return jsonify({"text": "OK"})
 
 # --- WEB SERVER ---
@@ -174,13 +176,13 @@ def home():
         <div class="header">
             <div class="top">
                 <div class="brand"><div class="dot"></div> Omni-Chat</div>
-                <!-- MODEL BUTTON (Inline Onclick) -->
+                <!-- FIXED: INLINE ONCLICK (Guaranteed to work) -->
                 <div class="model-select" onclick="openModelModal()">
                     <span id="currentModelDisplay">Gemini 3.0</span> <i class="fa-solid fa-chevron-down"></i>
                 </div>
             </div>
-            <!-- DIRECTOR TOGGLE (Inline Onclick) -->
-            <div class="dt-toggle" id="btnDirectorToggle" onclick="toggleDirectorMode()">
+            <!-- FIXED: DIRECTOR TOGGLE (Guaranteed to work) -->
+            <div class="dt-toggle" id="dtToggle" onclick="toggleDirectorMode()">
                 <div class="dt-box"><i class="fa-solid fa-check" style="display:none" id="dtCheck"></i></div> Director Mode (Ensemble)
             </div>
         </div>
@@ -190,9 +192,13 @@ def home():
         <div class="input-area">
             <input type="file" id="fileInput" accept="image/*" onchange="handleFile(this)">
             <div id="previewContainer"><img id="imageUploadPreview"></div>
+            
+            <!-- FIXED: INLINE ONCLICK -->
             <button class="icon-btn" onclick="openImgModal()"><i class="fa-solid fa-palette"></i></button>
             <button class="icon-btn" onclick="document.getElementById('fileInput').click()"><i class="fa-solid fa-paperclip"></i></button>
+            
             <div class="txt-box"><textarea id="prompt" placeholder="Message..." rows="1"></textarea></div>
+            
             <button class="icon-btn" onclick="startLiveCall()"><i class="fa-solid fa-microphone"></i></button>
             <button class="icon-btn send-btn" onclick="sendText()"><i class="fa-solid fa-arrow-up"></i></button>
         </div>
@@ -227,9 +233,9 @@ def home():
         <audio id="audioPlayer" style="display:none"></audio>
 
         <script>
-            // --- DATA ---
+            // --- DATA CONFIGURATION (Your Full List) ---
             const chatModels = [
-                // Server
+                // Server (Native)
                 {id: "gemini-3-flash-preview", name: "Gemini 3.0", tag: "⚡ GOOGLE"},
                 {id: "gemma-3-27b-it", name: "Gemma 3 27B", tag: "🔓 OPEN"},
                 
@@ -240,12 +246,12 @@ def home():
                 {id: "o3", name: "OpenAI o3", tag: "🤯 REASON"},
                 {id: "gpt-4o", name: "GPT-4o", tag: "🔥 BEST"},
                 
-                // Puter - Claude
+                // Puter - Claude Suite (Full)
                 {id: "claude-opus-4-5", name: "Claude Opus 4.5", tag: "💎 OPUS"},
                 {id: "claude-sonnet-4-5", name: "Claude Sonnet 4.5", tag: "📚 SONNET"},
                 {id: "claude-haiku-4-5", name: "Claude Haiku 4.5", tag: "💨 HAIKU"},
                 
-                // Puter - Gemini
+                // Puter - Gemini Suite (Full)
                 {id: "gemini-3-pro-preview", name: "Gemini 3 Pro", tag: "🧠 PUTER"},
                 {id: "gemini-2.5-pro", name: "Gemini 2.5 Pro", tag: "⭐ PUTER"},
                 {id: "gemini-2.5-flash", name: "Gemini 2.5 Flash", tag: "⚡ PUTER"}
@@ -265,16 +271,17 @@ def home():
             let selectedImgModel = "black-forest-labs/FLUX.1-schnell";
             let dtEnabled = false; 
             let imgBase64 = null;
+            let chatHistory = [];
 
-            // --- UI FUNCTIONS ---
+            // --- UI FUNCTIONS (Global Scope) ---
             function toggleDirectorMode() {
                 dtEnabled = !dtEnabled;
-                const el = document.getElementById("btnDirectorToggle");
+                const el = document.getElementById("dtToggle");
                 const icon = document.getElementById("dtCheck");
                 if (dtEnabled) { 
                     el.classList.add("active"); 
                     icon.style.display = "block"; 
-                    addMsg("Director Mode: Enabled. Combining GPT-5.2 Pro, Claude Opus 4.5, and Gemini 3 Pro.", "ai");
+                    addMsg("Director Mode: Enabled (Ensemble: GPT-5.2 Pro, Claude Opus 4.5, Gemini 3 Pro).", "ai");
                 } else { 
                     el.classList.remove("active"); 
                     icon.style.display = "none"; 
@@ -318,7 +325,7 @@ def home():
             }
             function closeImgSettings() { document.getElementById('imgModal').style.display='none'; }
 
-            // --- CHAT HELPERS ---
+            // --- HELPERS ---
             function extractText(res) {
                 if (typeof res === 'string') return res;
                 if (res?.message?.content) {
@@ -326,26 +333,6 @@ def home():
                     return res.message.content;
                 }
                 return JSON.stringify(res);
-            }
-
-            function addMsg(content, type, isHtml=false) {
-                let d = document.createElement("div");
-                d.className = "msg " + type;
-                if(typeof content === 'string') {
-                    let cDiv = document.createElement("div");
-                    if(isHtml) cDiv.innerHTML = content; else cDiv.innerText = content;
-                    d.appendChild(cDiv);
-                    if(type === 'ai') addCopyBtns(cDiv);
-                } else d.appendChild(content);
-                
-                if (type === "ai") {
-                    let b = document.createElement("button"); 
-                    b.className="tts-btn"; b.innerHTML='<i class="fa-solid fa-volume-high"></i>';
-                    b.onclick=()=>playTTS(d.innerText); d.appendChild(b);
-                }
-                
-                document.getElementById("chat").appendChild(d);
-                document.getElementById("chat").scrollTop = document.getElementById("chat").scrollHeight;
             }
 
             function addCopyBtns(element) {
@@ -366,6 +353,26 @@ def home():
                 });
             }
 
+            function addMsg(content, type) {
+                let d = document.createElement("div");
+                d.className = "msg " + type;
+                if(typeof content === 'string') {
+                    let cDiv = document.createElement("div");
+                    cDiv.innerHTML = content; // marked.parse output
+                    d.appendChild(cDiv);
+                    if(type === 'ai') addCopyBtns(cDiv);
+                } else d.appendChild(content);
+                
+                if (type === "ai") {
+                    let b = document.createElement("button"); 
+                    b.className="tts-btn"; b.innerHTML='<i class="fa-solid fa-volume-high"></i>';
+                    b.onclick=()=>playTTS(d.innerText); d.appendChild(b);
+                }
+                
+                document.getElementById("chat").appendChild(d);
+                document.getElementById("chat").scrollTop = document.getElementById("chat").scrollHeight;
+            }
+
             function addLoading(t="Thinking...") {
                 let d = document.createElement("div"); d.className="msg ai loading"; d.id="load";
                 d.innerHTML = `${t} <div class="spinner"></div>`;
@@ -374,11 +381,9 @@ def home():
             }
             function removeLoading() { let e=document.getElementById("load"); if(e) e.remove(); }
 
-            // --- DIRECTOR MODE LOGIC (ENSEMBLE) ---
+            // --- DIRECTOR MODE (ENSEMBLE) ---
             async function runDirectorMode(prompt) {
-                addLoading("Consulting Experts...");
-                
-                // THE 3 EXPERTS YOU REQUESTED
+                addLoading("Consulting Experts (GPT 5.2, Claude 4.5, Gemini 3)...");
                 const experts = [
                     { model: 'gpt-5.2-pro', name: 'GPT-5.2 Pro' },
                     { model: 'claude-opus-4-5', name: 'Claude Opus 4.5' },
@@ -386,7 +391,7 @@ def home():
                 ];
 
                 try {
-                    // 1. Parallel Calls
+                    // 1. Parallel Requests
                     const promises = experts.map(exp => 
                         puter.ai.chat(prompt, { model: exp.model })
                             .then(res => `--- Expert: ${exp.name} ---\n${extractText(res)}\n`)
@@ -411,7 +416,7 @@ def home():
 
                     const synthesis = await puter.ai.chat(finalPrompt, { model: 'gemini-3-pro-preview' });
                     removeLoading();
-                    addMsg(marked.parse(extractText(synthesis)), "ai", true);
+                    addMsg(marked.parse(extractText(synthesis)), "ai");
                     
                 } catch (e) {
                     removeLoading();
@@ -419,7 +424,7 @@ def home():
                 }
             }
 
-            // --- MAIN CHAT LOGIC ---
+            // --- MAIN SEND LOGIC ---
             const txtIn = document.getElementById("prompt");
             txtIn.addEventListener("keydown", function(e) { 
                 if(e.key === "Enter" && !e.shiftKey) { 
@@ -442,6 +447,7 @@ def home():
                         let prompt = t.replace("/image", "").trim();
                         let img = await puter.ai.txt2img(prompt, { model: selectedImgModel });
                         removeLoading();
+                        
                         let div = document.createElement("div"); div.className="img-wrapper";
                         img.style.width="100%"; div.appendChild(img);
                         let dl = document.createElement("a"); dl.className="download-btn"; dl.innerHTML='<i class="fa-solid fa-download"></i>';
@@ -451,7 +457,7 @@ def home():
                     return;
                 }
 
-                // 2. Director Mode (Client-Side Ensemble)
+                // 2. Director Mode (Ensemble)
                 if (dtEnabled) {
                     await runDirectorMode(t);
                     return;
@@ -471,8 +477,8 @@ def home():
                         method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(p)
                     }).then(r=>r.json()).then(d => {
                         removeLoading();
-                        // For server models, we can parse markdown here or let Marked do it
-                        addMsg(marked.parse(d.text || "Error"), "ai", true); 
+                        // Marked.js handles parsing
+                        addMsg(marked.parse(d.text || "Error"), "ai"); 
                     });
                 } else {
                     // Puter.js
@@ -487,7 +493,7 @@ def home():
                         
                         removeLoading();
                         let text = extractText(response);
-                        addMsg(marked.parse(text), "ai", true); 
+                        addMsg(marked.parse(text), "ai"); 
 
                     } catch(e) {
                         removeLoading();
@@ -501,20 +507,7 @@ def home():
                 .then(r=>r.json()).then(d => { if(d.audio) { let a=new Audio("data:audio/mp3;base64,"+d.audio); a.play(); } });
             }
 
-            // --- FILE HANDLING ---
-            function handleFile(input) {
-                if (input.files[0]) {
-                    let r = new FileReader();
-                    r.onload = e => {
-                        imgBase64 = e.target.result.split(',')[1];
-                        document.getElementById('imageUploadPreview').src = e.target.result;
-                        document.getElementById('previewContainer').style.display = 'block';
-                    };
-                    r.readAsDataURL(input.files[0]);
-                }
-            }
-
-            // --- LIVE CALL (WebSockets) ---
+            // --- LIVE CALL & FILE HANDLING ---
             let ws, audioCtx, mediaRecorder;
             async function startLiveCall() {
                 document.getElementById('callModal').style.display = 'flex';
@@ -556,6 +549,18 @@ def home():
             function endCall() {
                 if(ws) ws.close(); if(mediaRecorder) mediaRecorder.stop(); if(audioCtx) audioCtx.close();
                 document.getElementById('callModal').style.display='none';
+            }
+            
+            function handleFile(input) {
+                if (input.files[0]) {
+                    let r = new FileReader();
+                    r.onload = e => {
+                        imgBase64 = e.target.result.split(',')[1];
+                        document.getElementById('imageUploadPreview').src = e.target.result;
+                        document.getElementById('previewContainer').style.display = 'block';
+                    };
+                    r.readAsDataURL(input.files[0]);
+                }
             }
         </script>
     </body>
