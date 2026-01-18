@@ -20,19 +20,18 @@ sock = Sock(app)
 GEMINI_KEY = os.environ.get("GEMINI_KEY")
 
 # --- SERVER-SIDE CONFIG ---
-# These are used for "Live Call" or fallback server processing
 MODEL_CHAINS = {
     "NATIVE_AUDIO": ["gemini-2.0-flash-exp"], 
     "NEURAL_TTS": ["gemini-2.5-flash-tts"]
 }
 
-# --- SERVER-SIDE HELPERS ---
+# --- SERVER HELPERS ---
 def parse_markdown(text):
     try:
         return markdown2.markdown(text, extras=["tables", "fenced-code-blocks", "strike", "break-on-newline"])
     except: return text
 
-# --- API ENDPOINTS ---
+# --- ENDPOINTS ---
 @app.route('/generate_tts', methods=['POST'])
 def generate_tts():
     text = request.json.get('text')
@@ -81,10 +80,9 @@ def live_socket(ws):
 
 @app.route('/process_text', methods=['POST'])
 def process_text():
-    # Fallback endpoint if needed, but logic is mostly client-side now
+    # Only used if we need server-side parsing, mostly client-side now
     data = request.json
-    res = "Processing handled by Client."
-    return jsonify({"text": res, "html": parse_markdown(res)})
+    return jsonify({"text": "OK"})
 
 # --- WEB SERVER ---
 @app.route('/')
@@ -116,12 +114,9 @@ def home():
             .brand { font-weight: 700; font-size: 18px; display: flex; gap: 10px; align-items: center; }
             .dot { width: 8px; height: 8px; background: var(--primary); border-radius: 50%; box-shadow: 0 0 10px var(--primary); animation: pulse 2s infinite; }
             
-            /* MODEL SELECTOR BUTTON */
             .model-select { background: rgba(0,0,0,0.3); border: 1px solid var(--border); border-radius: 20px; color: #aaa; padding: 5px 15px; font-size: 12px; cursor: pointer; display: flex; align-items: center; gap: 5px; transition: 0.2s; user-select: none; }
             .model-select:hover { border-color: var(--primary); color: white; background: rgba(255,255,255,0.05); }
-            .model-select:active { transform: scale(0.98); }
 
-            /* DIRECTOR TOGGLE BUTTON */
             .dt-toggle { font-size: 11px; color: #666; display: flex; align-items: center; gap: 8px; cursor: pointer; margin-left: 2px; width: fit-content; transition: 0.3s; padding: 4px 8px; border-radius: 12px; user-select: none; }
             .dt-box { width: 14px; height: 14px; border: 1px solid #444; border-radius: 3px; display: flex; align-items: center; justify-content: center; transition: 0.3s; background: #111; }
             .dt-toggle:hover { color: #888; background: rgba(255,255,255,0.02); }
@@ -179,33 +174,33 @@ def home():
         <div class="header">
             <div class="top">
                 <div class="brand"><div class="dot"></div> Omni-Chat</div>
-                <!-- MODEL BUTTON: ID added for JS binding -->
-                <div class="model-select" id="btnModelSelect">
+                <!-- MODEL BUTTON (Inline Onclick) -->
+                <div class="model-select" onclick="openModelModal()">
                     <span id="currentModelDisplay">Gemini 3.0</span> <i class="fa-solid fa-chevron-down"></i>
                 </div>
             </div>
-            <!-- DIRECTOR TOGGLE: ID added for JS binding -->
-            <div class="dt-toggle" id="btnDirectorToggle">
+            <!-- DIRECTOR TOGGLE (Inline Onclick) -->
+            <div class="dt-toggle" id="btnDirectorToggle" onclick="toggleDirectorMode()">
                 <div class="dt-box"><i class="fa-solid fa-check" style="display:none" id="dtCheck"></i></div> Director Mode (Ensemble)
             </div>
         </div>
 
-        <div class="chat" id="chat"><div class="msg ai">Online. Director Mode combines GPT-5.2 Pro + Claude Opus + Gemini.</div></div>
+        <div class="chat" id="chat"><div class="msg ai">Online. Director Mode uses GPT-5.2 Pro + Claude Opus + Gemini 3.</div></div>
 
         <div class="input-area">
             <input type="file" id="fileInput" accept="image/*" onchange="handleFile(this)">
             <div id="previewContainer"><img id="imageUploadPreview"></div>
-            <button class="icon-btn" id="btnImageSettings"><i class="fa-solid fa-palette"></i></button>
+            <button class="icon-btn" onclick="openImgModal()"><i class="fa-solid fa-palette"></i></button>
             <button class="icon-btn" onclick="document.getElementById('fileInput').click()"><i class="fa-solid fa-paperclip"></i></button>
             <div class="txt-box"><textarea id="prompt" placeholder="Message..." rows="1"></textarea></div>
             <button class="icon-btn" onclick="startLiveCall()"><i class="fa-solid fa-microphone"></i></button>
-            <button class="icon-btn send-btn" id="btnSend"><i class="fa-solid fa-arrow-up"></i></button>
+            <button class="icon-btn send-btn" onclick="sendText()"><i class="fa-solid fa-arrow-up"></i></button>
         </div>
 
         <!-- MODEL MODAL -->
         <div class="modal" id="modelModal">
             <div class="modal-content">
-                <div style="display:flex; justify-content:space-between; align-items:center;"><h3>Select Chat Model</h3><div class="close-btn" id="btnCloseModelModal">&times;</div></div>
+                <div style="display:flex; justify-content:space-between; align-items:center;"><h3>Select Chat Model</h3><div class="close-btn" onclick="closeModelModal()">&times;</div></div>
                 <div id="chatModelList"></div>
             </div>
         </div>
@@ -213,7 +208,7 @@ def home():
         <!-- IMAGE MODAL -->
         <div class="modal" id="imgModal">
             <div class="modal-content">
-                <div style="display:flex; justify-content:space-between; align-items:center;"><h3>Image Model</h3><div class="close-btn" id="btnCloseImgModal">&times;</div></div>
+                <div style="display:flex; justify-content:space-between; align-items:center;"><h3>Image Model</h3><div class="close-btn" onclick="closeImgSettings()">&times;</div></div>
                 <div id="imgModelList"></div>
             </div>
         </div>
@@ -232,10 +227,9 @@ def home():
         <audio id="audioPlayer" style="display:none"></audio>
 
         <script>
-            // --- DATA CONFIGURATION ---
-            // Defined globally so functions can access them easily
+            // --- DATA ---
             const chatModels = [
-                // Server (Native)
+                // Server
                 {id: "gemini-3-flash-preview", name: "Gemini 3.0", tag: "⚡ GOOGLE"},
                 {id: "gemma-3-27b-it", name: "Gemma 3 27B", tag: "🔓 OPEN"},
                 
@@ -271,32 +265,6 @@ def home():
             let selectedImgModel = "black-forest-labs/FLUX.1-schnell";
             let dtEnabled = false; 
             let imgBase64 = null;
-            let chatHistory = [];
-
-            // --- INITIALIZATION (Fixing the "Not Defined" errors) ---
-            document.addEventListener("DOMContentLoaded", () => {
-                // Bind Events safely
-                document.getElementById('btnModelSelect').addEventListener('click', openModelModal);
-                document.getElementById('btnDirectorToggle').addEventListener('click', toggleDirectorMode);
-                document.getElementById('btnImageSettings').addEventListener('click', openImgModal);
-                document.getElementById('btnSend').addEventListener('click', sendText);
-                
-                document.getElementById('btnCloseModelModal').addEventListener('click', () => {
-                    document.getElementById('modelModal').style.display='none';
-                });
-                document.getElementById('btnCloseImgModal').addEventListener('click', () => {
-                    document.getElementById('imgModal').style.display='none';
-                });
-
-                // Init Input
-                const txtIn = document.getElementById("prompt");
-                txtIn.addEventListener("keydown", function(e) { 
-                    if(e.key === "Enter" && !e.shiftKey) { 
-                        e.preventDefault(); 
-                        sendText(); 
-                    } 
-                });
-            });
 
             // --- UI FUNCTIONS ---
             function toggleDirectorMode() {
@@ -306,7 +274,7 @@ def home():
                 if (dtEnabled) { 
                     el.classList.add("active"); 
                     icon.style.display = "block"; 
-                    addMsg("Director Mode: Enabled. Combining GPT-5.2, Claude Opus, and Gemini 3.", "ai");
+                    addMsg("Director Mode: Enabled. Combining GPT-5.2 Pro, Claude Opus 4.5, and Gemini 3 Pro.", "ai");
                 } else { 
                     el.classList.remove("active"); 
                     icon.style.display = "none"; 
@@ -325,12 +293,13 @@ def home():
                     div.onclick = () => {
                         selectedChatModel = m.id;
                         document.getElementById("currentModelDisplay").innerText = m.name;
-                        document.getElementById('modelModal').style.display = 'none';
+                        closeModelModal();
                     };
                     c.appendChild(div);
                 });
                 document.getElementById("modelModal").style.display = "flex";
             }
+            function closeModelModal() { document.getElementById('modelModal').style.display='none'; }
 
             function openImgModal() {
                 const c = document.getElementById("imgModelList");
@@ -341,12 +310,13 @@ def home():
                     div.innerHTML = `<span>${m.name}</span> <span class="tag">${m.tag}</span>`;
                     div.onclick = () => {
                         selectedImgModel = m.id;
-                        document.getElementById('imgModal').style.display = 'none';
+                        closeImgSettings();
                     };
                     c.appendChild(div);
                 });
                 document.getElementById("imgModal").style.display = "flex";
             }
+            function closeImgSettings() { document.getElementById('imgModal').style.display='none'; }
 
             // --- CHAT HELPERS ---
             function extractText(res) {
@@ -358,12 +328,12 @@ def home():
                 return JSON.stringify(res);
             }
 
-            function addMsg(content, type) {
+            function addMsg(content, type, isHtml=false) {
                 let d = document.createElement("div");
                 d.className = "msg " + type;
                 if(typeof content === 'string') {
                     let cDiv = document.createElement("div");
-                    cDiv.innerHTML = content; // Assuming marked.parse passed here
+                    if(isHtml) cDiv.innerHTML = content; else cDiv.innerText = content;
                     d.appendChild(cDiv);
                     if(type === 'ai') addCopyBtns(cDiv);
                 } else d.appendChild(content);
@@ -407,6 +377,8 @@ def home():
             // --- DIRECTOR MODE LOGIC (ENSEMBLE) ---
             async function runDirectorMode(prompt) {
                 addLoading("Consulting Experts...");
+                
+                // THE 3 EXPERTS YOU REQUESTED
                 const experts = [
                     { model: 'gpt-5.2-pro', name: 'GPT-5.2 Pro' },
                     { model: 'claude-opus-4-5', name: 'Claude Opus 4.5' },
@@ -414,7 +386,7 @@ def home():
                 ];
 
                 try {
-                    // Parallel Requests
+                    // 1. Parallel Calls
                     const promises = experts.map(exp => 
                         puter.ai.chat(prompt, { model: exp.model })
                             .then(res => `--- Expert: ${exp.name} ---\n${extractText(res)}\n`)
@@ -424,7 +396,7 @@ def home():
                     const results = await Promise.all(promises);
                     const rawData = results.join("\n");
 
-                    // Synthesis
+                    // 2. Synthesis (Gemini 3 Pro)
                     removeLoading();
                     addLoading("Synthesizing Final Answer...");
                     
@@ -439,7 +411,7 @@ def home():
 
                     const synthesis = await puter.ai.chat(finalPrompt, { model: 'gemini-3-pro-preview' });
                     removeLoading();
-                    addMsg(marked.parse(extractText(synthesis)), "ai");
+                    addMsg(marked.parse(extractText(synthesis)), "ai", true);
                     
                 } catch (e) {
                     removeLoading();
@@ -447,22 +419,29 @@ def home():
                 }
             }
 
-            // --- MAIN SEND LOGIC ---
+            // --- MAIN CHAT LOGIC ---
+            const txtIn = document.getElementById("prompt");
+            txtIn.addEventListener("keydown", function(e) { 
+                if(e.key === "Enter" && !e.shiftKey) { 
+                    e.preventDefault(); 
+                    sendText(); 
+                } 
+            });
+
             async function sendText() {
-                let t = document.getElementById("prompt").value.trim();
+                let t = txtIn.value.trim();
                 if(!t && !imgBase64) return;
                 
                 addMsg(t, "user");
-                document.getElementById("prompt").value = "";
+                txtIn.value = "";
                 
-                // Image Generation
-                if (t.toLowerCase().startsWith("/image")) {
+                // 1. Image Generation
+                if (t.toLowerCase().startsWith("/image") || t.toLowerCase().includes("generate image")) {
                     addLoading("Painting...");
                     try {
                         let prompt = t.replace("/image", "").trim();
                         let img = await puter.ai.txt2img(prompt, { model: selectedImgModel });
                         removeLoading();
-                        
                         let div = document.createElement("div"); div.className="img-wrapper";
                         img.style.width="100%"; div.appendChild(img);
                         let dl = document.createElement("a"); dl.className="download-btn"; dl.innerHTML='<i class="fa-solid fa-download"></i>';
@@ -472,7 +451,7 @@ def home():
                     return;
                 }
 
-                // Director Mode
+                // 2. Director Mode (Client-Side Ensemble)
                 if (dtEnabled) {
                     await runDirectorMode(t);
                     return;
@@ -480,23 +459,40 @@ def home():
 
                 addLoading();
                 
-                // Puter.js Chat
-                try {
-                    let response;
-                    if (imgBase64) {
-                         response = await puter.ai.chat(t, "data:image/jpeg;base64," + imgBase64, { model: selectedChatModel });
-                         imgBase64 = null; document.getElementById('previewContainer').style.display='none';
-                    } else {
-                         response = await puter.ai.chat(t, { model: selectedChatModel });
-                    }
+                // 3. Normal Routing
+                const serverModels = ["gemini-3-flash-preview", "gemma-3-27b-it"];
+                
+                if (serverModels.includes(selectedChatModel)) {
+                    // Python Server
+                    let p = { prompt: t, history: [], model: selectedChatModel };
+                    if(imgBase64) { p.image = imgBase64; imgBase64 = null; document.getElementById('previewContainer').style.display='none'; }
                     
-                    removeLoading();
-                    let text = extractText(response);
-                    addMsg(marked.parse(text), "ai"); 
+                    fetch("/process_text", {
+                        method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(p)
+                    }).then(r=>r.json()).then(d => {
+                        removeLoading();
+                        // For server models, we can parse markdown here or let Marked do it
+                        addMsg(marked.parse(d.text || "Error"), "ai", true); 
+                    });
+                } else {
+                    // Puter.js
+                    try {
+                        let response;
+                        if (imgBase64) {
+                             response = await puter.ai.chat(t, "data:image/jpeg;base64," + imgBase64, { model: selectedChatModel });
+                             imgBase64 = null; document.getElementById('previewContainer').style.display='none';
+                        } else {
+                             response = await puter.ai.chat(t, { model: selectedChatModel });
+                        }
+                        
+                        removeLoading();
+                        let text = extractText(response);
+                        addMsg(marked.parse(text), "ai", true); 
 
-                } catch(e) {
-                    removeLoading();
-                    addMsg("Error: " + e, "ai");
+                    } catch(e) {
+                        removeLoading();
+                        addMsg("Error: " + e, "ai");
+                    }
                 }
             }
 
