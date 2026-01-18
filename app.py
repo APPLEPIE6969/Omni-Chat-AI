@@ -18,107 +18,20 @@ sock = Sock(app)
 # --- CONFIGURATION ---
 GEMINI_KEY = os.environ.get("GEMINI_KEY")
 
-# --- SERVER-SIDE MODEL CHAINS (Your Specific API Key Models) ---
+# --- SERVER-SIDE MODEL CHAINS (Native Audio Only) ---
+# Note: Text generation has moved primarily to Puter.js (Client) for free access.
+# These server chains are kept for the "Live Call" feature which requires direct socket access.
 MODEL_CHAINS = {
-    "GEMINI": [
-        "gemini-3-flash-preview", 
-        "gemini-2.5-flash",
-        "gemini-2.5-flash-lite"
-    ],
-    "GEMMA": [
-        "gemma-3-27b-it",
-        "gemma-3-12b-it",
-        "gemma-3-4b-it",
-        "gemma-3-2b-it",
-        "gemma-3-1b-it"
-    ],
-    "DIRECTOR": [
-        "gemini-3-flash-preview",
-        "gemini-2.5-flash",
-        "gemini-2.5-flash-lite",
-        "gemma-3-27b-it"
-    ],
     "NATIVE_AUDIO": ["gemini-2.0-flash-exp"], 
     "NEURAL_TTS": ["gemini-2.5-flash-tts"]
 }
 
 # --- SERVER-SIDE MARKDOWN PARSING ---
+# We keep this for any server-side rendered text, though mostly handled by JS now.
 def parse_markdown(text):
     try:
         return markdown2.markdown(text, extras=["tables", "fenced-code-blocks", "strike", "break-on-newline"])
     except: return text
-
-# --- HELPER: ROBUST REQUEST ---
-def try_model_chain(chain_key, payload):
-    models = MODEL_CHAINS.get(chain_key, MODEL_CHAINS["GEMINI"])
-    last_error = "No models available"
-
-    for model in models:
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={GEMINI_KEY}"
-        try:
-            r = requests.post(url, json=payload)
-            if r.status_code != 200:
-                print(f"⚠️ {model} Failed ({r.status_code}). Switching...")
-                continue
-            
-            data = r.json()
-            if "candidates" in data and len(data["candidates"]) > 0:
-                return data["candidates"][0]["content"]["parts"][0]["text"]
-            
-            if "error" in data:
-                print(f"⚠️ {model} API Error. Switching...")
-                continue
-                
-        except Exception as e:
-            last_error = str(e)
-            continue
-
-    return f"Error: All models failed. ({last_error})"
-
-# --- DIRECTOR REVIEW LOGIC ---
-def director_review_process(last_user_prompt, initial_response):
-    review_prompt = (
-        f"ORIGINAL USER PROMPT: {last_user_prompt}\n"
-        f"DRAFT RESPONSE: {initial_response}\n\n"
-        "INSTRUCTION: You are the Director. Review the draft response above. "
-        "If it is accurate and high quality, repeat it exactly. "
-        "If it has errors or bad tone, rewrite it to be perfect. "
-        "Return ONLY the final response text."
-    )
-    parts = [{ "text": review_prompt }]
-    payload = { "contents": [{ "parts": parts }] }
-    return try_model_chain("DIRECTOR", payload)
-
-# --- REST AI CALLER ---
-def call_ai_text(model_id, history, image_data=None, deep_think=False):
-    # Map frontend IDs to backend chains
-    if "gemma" in model_id: chain_key = "GEMMA"
-    elif "director" in model_id: chain_key = "DIRECTOR"
-    else: chain_key = "GEMINI"
-    
-    if image_data and history:
-        for msg in reversed(history):
-            if msg['role'] == 'user':
-                msg['parts'].append({ "inline_data": { "mime_type": "image/jpeg", "data": image_data } })
-                break
-
-    payload = { 
-        "contents": history,
-        "system_instruction": {
-            "parts": [{"text": "You are Omni-Chat, a helpful, intelligent assistant. You have access to Gemini 3.0 and Gemma 3 models."}]
-        }
-    }
-    
-    response_text = try_model_chain(chain_key, payload)
-    
-    if deep_think and not response_text.startswith("Error:"):
-        last_prompt = "User Input"
-        try:
-            last_prompt = history[-1]['parts'][0]['text']
-        except: pass
-        response_text = director_review_process(last_prompt, response_text)
-    
-    return response_text
 
 # --- HELPER: GTTS GENERATION ---
 @app.route('/generate_tts', methods=['POST'])
@@ -130,18 +43,16 @@ def generate_tts():
         tts = gTTS(text=text, lang='en')
         fp = io.BytesIO()
         tts.write_to_fp(fp)
-        fp.seek(0)
         b64 = base64.b64encode(fp.read()).decode()
         return jsonify({"audio": b64})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
-# --- WEBSOCKET LIVE CALL ---
+# --- WEBSOCKET LIVE CALL (Server-Side) ---
 @sock.route('/ws/live')
 def live_socket(ws):
     client = genai.Client(api_key=GEMINI_KEY, http_options={'api_version': 'v1alpha'})
     
-    # 2.0 Flash Exp is required for SDK Live Streaming
     LIVE_MODEL = MODEL_CHAINS["NATIVE_AUDIO"][0]
     
     config = types.LiveConnectConfig(
@@ -199,20 +110,20 @@ def home():
     <!DOCTYPE html>
     <html lang="en">
     <head>
-        <title>Omni-Chat Live</title>
-        <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+        <title>Omni-Chat</title>
+        <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
         <meta name="theme-color" content="#050508">
         <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;500;700&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
         <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
         
         <!-- Puter.js -->
         <script src="https://js.puter.com/v2/"></script>
-        <!-- Marked.js for Client-Side Markdown -->
+        <!-- Marked.js -->
         <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
 
         <style>
             :root { --bg: #050508; --header: rgba(20,20,30,0.95); --border: rgba(255,255,255,0.1); --primary: #00f2ea; --secondary: #7000ff; --text: #fff; }
-            * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+            * { box-sizing: border-box; }
             body { background: var(--bg); color: var(--text); font-family: 'Outfit', sans-serif; height: 100dvh; display: flex; flex-direction: column; margin: 0; overflow: hidden; }
 
             .orb { position: absolute; border-radius: 50%; filter: blur(80px); opacity: 0.3; z-index: -1; animation: float 10s infinite alternate; }
@@ -220,65 +131,40 @@ def home():
             .orb-2 { width: 300px; height: 300px; background: var(--primary); bottom: -10%; right: -10%; animation-delay: 2s; }
             @keyframes float { 0% { transform: translate(0,0); } 100% { transform: translate(30px, 30px); } }
 
-            .header { padding: 10px 15px; background: var(--header); border-bottom: 1px solid var(--border); z-index: 10; display: flex; flex-direction: column; gap: 10px; }
+            .header { padding: 10px 15px; background: var(--header); border-bottom: 1px solid var(--border); z-index: 10; display: flex; flex-direction: column; gap: 5px; }
             .top { display: flex; justify-content: space-between; align-items: center; }
             .brand { font-weight: 700; font-size: 18px; display: flex; gap: 10px; align-items: center; }
             .dot { width: 8px; height: 8px; background: var(--primary); border-radius: 50%; box-shadow: 0 0 10px var(--primary); animation: pulse 2s infinite; }
-            @keyframes pulse { 0% { opacity: 1; } 50% { opacity: 0.5; } }
-
-            /* DROPDOWN SELECTOR */
-            .model-select {
-                background: rgba(0,0,0,0.3); border: 1px solid var(--border); border-radius: 20px; 
-                color: #aaa; padding: 5px 15px; font-size: 12px; cursor: pointer; display: flex; align-items: center; gap: 5px;
-                transition: 0.2s;
-            }
+            
+            .model-select { background: rgba(0,0,0,0.3); border: 1px solid var(--border); border-radius: 20px; color: #aaa; padding: 5px 15px; font-size: 12px; cursor: pointer; display: flex; align-items: center; gap: 5px; transition: 0.2s; }
             .model-select:hover { border-color: var(--primary); color: white; }
 
-            .dt-toggle { font-size: 11px; color: #888; display: flex; align-items: center; gap: 5px; cursor: pointer; }
-            .dt-box { width: 14px; height: 14px; border: 1px solid #555; border-radius: 3px; display: flex; align-items: center; justify-content: center; transition: 0.3s; }
-            .dt-toggle.active { color: #ffd700; }
+            /* DIRECTOR MODE TOGGLE */
+            .dt-toggle { font-size: 11px; color: #666; display: flex; align-items: center; gap: 6px; cursor: pointer; margin-left: 20px; width: fit-content; transition: 0.3s; }
+            .dt-box { width: 14px; height: 14px; border: 1px solid #444; border-radius: 3px; display: flex; align-items: center; justify-content: center; transition: 0.3s; background: #111; }
+            .dt-toggle.active { color: #ffd700; text-shadow: 0 0 10px rgba(255, 215, 0, 0.3); }
             .dt-toggle.active .dt-box { background: #ffd700; border-color: #ffd700; color: #000; box-shadow: 0 0 8px #ffd700; }
 
             .chat { flex-grow: 1; padding: 20px; overflow-y: auto; display: flex; flex-direction: column; gap: 15px; }
-            .msg { max-width: 85%; padding: 12px 16px; border-radius: 18px; font-size: 15px; line-height: 1.5; word-wrap: break-word; animation: pop 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275); position: relative; }
+            .msg { max-width: 85%; padding: 12px 16px; border-radius: 18px; font-size: 15px; line-height: 1.5; word-wrap: break-word; animation: pop 0.3s ease; position: relative; }
             .user { align-self: flex-end; background: linear-gradient(135deg, var(--primary), #00a8a2); color: #000; font-weight: 500; border-bottom-right-radius: 4px; }
             .ai { align-self: flex-start; background: rgba(255,255,255,0.05); border: 1px solid var(--border); border-bottom-left-radius: 4px; }
-            
-            /* CODE BLOCK & COPY BUTTON */
-            .ai pre { position: relative; background: rgba(0,0,0,0.5); padding: 15px; border-radius: 12px; overflow-x: auto; margin: 10px 0; border: 1px solid rgba(255,255,255,0.1); }
-            .ai code { font-family: 'JetBrains Mono', monospace; font-size: 13px; color: #e0e0e0; }
-            .copy-btn {
-                position: absolute; top: 8px; right: 8px;
-                background: rgba(255, 255, 255, 0.1); border: 1px solid rgba(255,255,255,0.1);
-                color: #aaa; padding: 4px 8px; border-radius: 6px; cursor: pointer; font-size: 11px;
-                transition: 0.2s; display: flex; align-items: center; gap: 5px;
-            }
-            .copy-btn:hover { background: rgba(0, 242, 234, 0.15); color: var(--primary); border-color: var(--primary); }
-
-            .img-wrapper { position: relative; display: inline-block; max-width: 100%; border-radius: 12px; overflow: hidden; margin-top: 10px; box-shadow: 0 5px 20px rgba(0,0,0,0.4); }
-            .img-wrapper img { width: 100%; height: auto; display: block; }
-            .download-btn { position: absolute; bottom: 8px; right: 8px; background: rgba(0,0,0,0.6); color: white; border: 1px solid rgba(255,255,255,0.2); width: 32px; height: 32px; border-radius: 8px; display: flex; align-items: center; justify-content: center; cursor: pointer; transition: 0.2s; text-decoration: none; backdrop-filter: blur(4px); }
             @keyframes pop { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
 
-            .loading { display: flex; align-items: center; gap: 8px; color: #aaa; font-style: italic; padding: 10px 16px; background: transparent; border: none; }
-            .spinner { width: 14px; height: 14px; border: 2px solid var(--primary); border-top-color: transparent; border-radius: 50%; animation: spin 1s linear infinite; }
-            @keyframes spin { to { transform: rotate(360deg); } }
+            .ai pre { position: relative; background: rgba(0,0,0,0.5); padding: 15px; border-radius: 12px; overflow-x: auto; margin: 10px 0; border: 1px solid rgba(255,255,255,0.1); }
+            .ai code { font-family: 'JetBrains Mono', monospace; font-size: 13px; color: #e0e0e0; }
+            .copy-btn { position: absolute; top: 5px; right: 5px; background: rgba(255,255,255,0.1); border: 1px solid rgba(255,255,255,0.1); color: #aaa; padding: 4px 8px; border-radius: 6px; cursor: pointer; font-size: 10px; display: flex; align-items: center; gap: 5px; transition: 0.2s; }
+            .copy-btn:hover { background: rgba(0, 242, 234, 0.2); color: var(--primary); border-color: var(--primary); }
 
-            .ai p { margin: 5px 0; }
-            
-            .tts-btn { position: absolute; bottom: -25px; right: 0; background: rgba(255,255,255,0.1); color: #aaa; border: none; border-radius: 50%; width: 24px; height: 24px; display: flex; align-items: center; justify-content: center; cursor: pointer; font-size: 10px; transition: 0.2s; }
-            .tts-btn:hover { color: var(--primary); background: rgba(0,242,234,0.1); }
-
-            .input-area { padding: 15px; background: var(--header); border-top: 1px solid var(--border); display: flex; gap: 10px; align-items: flex-end; padding-bottom: max(15px, env(safe-area-inset-bottom)); }
-            .txt-box { flex-grow: 1; position: relative; }
+            .input-area { padding: 15px; background: var(--header); border-top: 1px solid var(--border); display: flex; gap: 10px; align-items: flex-end; }
+            .txt-box { flex-grow: 1; }
             textarea { width: 100%; background: rgba(0,0,0,0.4); border: 1px solid var(--border); padding: 12px 15px; border-radius: 20px; color: #fff; font-size: 16px; resize: none; height: 48px; max-height: 120px; transition: 0.3s; font-family: inherit; }
             textarea:focus { border-color: var(--primary); box-shadow: 0 0 15px rgba(0,242,234,0.2); }
-            
-            .icon-btn { width: 48px; height: 48px; border-radius: 50%; border: 1px solid var(--border); background: rgba(255,255,255,0.05); color: #aaa; font-size: 18px; display: flex; align-items: center; justify-content: center; cursor: pointer; transition: 0.2s; flex-shrink: 0; }
+            .icon-btn { width: 48px; height: 48px; border-radius: 50%; border: 1px solid var(--border); background: rgba(255,255,255,0.05); color: #aaa; font-size: 18px; display: flex; align-items: center; justify-content: center; cursor: pointer; flex-shrink: 0; transition: 0.2s; }
             .icon-btn:hover { color: var(--primary); border-color: var(--primary); }
             .send-btn { background: var(--primary); color: #000; border: none; }
+            .tts-btn { position: absolute; bottom: -25px; right: 0; background: rgba(255,255,255,0.1); color: #aaa; border: none; border-radius: 50%; width: 24px; height: 24px; display: flex; align-items: center; justify-content: center; cursor: pointer; font-size: 10px; }
 
-            /* MODALS */
             .modal { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.8); z-index: 200; display: none; align-items: center; justify-content: center; backdrop-filter: blur(5px); }
             .modal-content { background: #1a1a20; border: 1px solid var(--border); border-radius: 20px; padding: 20px; width: 90%; max-width: 400px; max-height: 80vh; overflow-y: auto; display: flex; flex-direction: column; gap: 10px; }
             .modal-item { padding: 12px; border-radius: 12px; background: rgba(255,255,255,0.05); cursor: pointer; display: flex; justify-content: space-between; align-items: center; }
@@ -287,9 +173,9 @@ def home():
             .tag { font-size: 10px; padding: 2px 6px; border-radius: 4px; background: #333; color: #aaa; text-transform: uppercase; }
             .tag.fast { color: #00ff00; background: rgba(0,255,0,0.1); }
             .tag.best { color: #ffd700; background: rgba(255,215,0,0.1); }
-            .close-btn { align-self: flex-end; cursor: pointer; color: #aaa; font-size: 20px; margin-bottom: 5px; }
-            
-            /* LIVE CALL */
+            .tag.opus { color: #7000ff; background: rgba(112, 0, 255, 0.1); }
+            .close-btn { align-self: flex-end; cursor: pointer; color: #aaa; font-size: 20px; }
+
             .call-vis { display: flex; gap: 5px; height: 50px; align-items: center; margin-bottom: 40px; }
             .bar { width: 6px; background: var(--primary); border-radius: 3px; animation: wave 1s infinite ease-in-out; height: 10px; }
             .bar:nth-child(1) { animation-delay: 0s; } .bar:nth-child(2) { animation-delay: 0.1s; } .bar:nth-child(3) { animation-delay: 0.2s; }
@@ -298,6 +184,9 @@ def home():
             #fileInput, #previewContainer { display: none; }
             #previewContainer { position: absolute; bottom: 60px; left: 15px; }
             #imageUploadPreview { width: 60px; height: 60px; border-radius: 10px; object-fit: cover; border: 2px solid var(--primary); }
+            .img-wrapper { position: relative; display: inline-block; max-width: 100%; border-radius: 12px; overflow: hidden; margin-top: 10px; }
+            .img-wrapper img { width: 100%; height: auto; display: block; }
+            .download-btn { position: absolute; bottom: 8px; right: 8px; background: rgba(0,0,0,0.6); color: white; border: 1px solid rgba(255,255,255,0.2); width: 32px; height: 32px; border-radius: 8px; display: flex; align-items: center; justify-content: center; cursor: pointer; backdrop-filter: blur(4px); }
         </style>
     </head>
     <body>
@@ -311,12 +200,13 @@ def home():
                     <span id="currentModelDisplay">Gemini 3.0</span> <i class="fa-solid fa-chevron-down"></i>
                 </div>
             </div>
+            <!-- DIRECTOR MODE TOGGLE -->
             <div class="dt-toggle" id="dtToggle" onclick="toggleDT()">
-                <div class="dt-box"><i class="fa-solid fa-check" style="display:none" id="dtCheck"></i></div> Director Review
+                <div class="dt-box"><i class="fa-solid fa-check" style="display:none" id="dtCheck"></i></div> Director Mode (Ensemble)
             </div>
         </div>
 
-        <div class="chat" id="chat"><div class="msg ai">Online. Hybrid Architecture (Python + Puter.js).</div></div>
+        <div class="chat" id="chat"><div class="msg ai">Online. Director Mode uses GPT-5.2 Pro, Claude Opus 4.5, and Gemini 3 Pro.</div></div>
 
         <div class="input-area">
             <input type="file" id="fileInput" accept="image/*" onchange="handleFile(this)">
@@ -361,34 +251,35 @@ def home():
             // --- STATE ---
             let selectedChatModel = "gemini-3-flash-preview"; 
             let selectedImgModel = "black-forest-labs/FLUX.1-schnell";
+            let dtEnabled = false; 
             let imgBase64 = null;
             let chatHistory = [];
 
-            // --- MODEL LISTS (Hybrid) ---
-            const pythonModels = ["gemini-3-flash-preview", "gemini-2.5-flash", "gemini-2.5-flash-lite", "gemma-3-27b-it", "director-mode"];
-            
+            // --- MODEL LISTS (All Puter + Your Google) ---
             const chatModels = [
-                // --- SPECIAL SERVER MODES ---
+                // Server (Native)
                 {id: "gemini-3-flash-preview", name: "Gemini 3.0", tag: "⚡ GOOGLE"},
-                {id: "director-mode", name: "Director Mode", tag: "🎬 DEEP"},
                 {id: "gemma-3-27b-it", name: "Gemma 3 27B", tag: "🔓 OPEN"},
                 
-                // --- PUTER.JS (OPENAI) ---
+                // Puter - OpenAI
                 {id: "gpt-5.2-codex", name: "GPT 5.2 Codex", tag: "💻 CODE"},
                 {id: "gpt-5.2-pro", name: "GPT 5.2 Pro", tag: "👑 ULTIMATE"},
                 {id: "gpt-5-nano", name: "GPT-5 Nano", tag: "⚡ FAST"},
                 {id: "o3", name: "OpenAI o3", tag: "🤯 REASON"},
                 {id: "gpt-4o", name: "GPT-4o", tag: "🔥 BEST"},
                 
-                // --- PUTER.JS (GEMINI SUITE) ---
+                // Puter - Claude Suite (NEW)
+                {id: "claude-opus-4-5", name: "Claude Opus 4.5", tag: "💎 OPUS"},
+                {id: "claude-sonnet-4-5", name: "Claude Sonnet 4.5", tag: "📚 SONNET"},
+                {id: "claude-haiku-4-5", name: "Claude Haiku 4.5", tag: "💨 HAIKU"},
+                {id: "claude-opus-4-1", name: "Claude Opus 4.1", tag: "💎 OPUS"},
+                {id: "claude-sonnet-4", name: "Claude Sonnet 4", tag: "📚 SONNET"},
+                
+                // Puter - Gemini
                 {id: "gemini-3-pro-preview", name: "Gemini 3 Pro", tag: "🧠 PUTER"},
                 {id: "gemini-2.5-pro", name: "Gemini 2.5 Pro", tag: "⭐ PUTER"},
                 {id: "gemini-2.5-flash-lite", name: "Gemini 2.5 Lite", tag: "⚡ PUTER"},
-                {id: "gemini-2.5-flash", name: "Gemini 2.5 Flash", tag: "⚡ PUTER"},
-                {id: "gemini-2.0-flash-lite", name: "Gemini 2.0 Lite", tag: "⚡ PUTER"},
-                
-                // --- PUTER.JS (OTHERS) ---
-                {id: "claude-3-5-sonnet", name: "Claude 3.5", tag: "📚 ANTHROPIC"}
+                {id: "gemini-2.5-flash", name: "Gemini 2.5 Flash", tag: "⚡ PUTER"}
             ];
 
             const imgModels = [
@@ -400,14 +291,23 @@ def home():
                 {id: "gpt-image-1", name: "GPT Image", tag: "🤖 GPT"}
             ];
 
-            // --- RENDER LISTS ---
+            // --- UI LOGIC ---
+            function toggleDT() {
+                dtEnabled = !dtEnabled;
+                const el = document.getElementById("dtToggle");
+                const icon = document.getElementById("dtCheck");
+                if (dtEnabled) { el.classList.add("active"); icon.style.display = "block"; }
+                else { el.classList.remove("active"); icon.style.display = "none"; }
+            }
+
             function renderList(list, containerId, currentVal, onClick) {
                 const c = document.getElementById(containerId);
                 c.innerHTML = "";
                 list.forEach(m => {
                     let div = document.createElement("div");
                     div.className = `modal-item ${m.id === currentVal ? 'selected' : ''}`;
-                    div.innerHTML = `<span>${m.name}</span> <span class="tag ${m.tag.includes('GOOGLE')?'fast':'best'}">${m.tag}</span>`;
+                    let tagClass = m.tag.includes('OPUS') ? 'opus' : (m.tag.includes('GOOGLE')?'fast':'best');
+                    div.innerHTML = `<span>${m.name}</span> <span class="tag ${tagClass}">${m.tag}</span>`;
                     div.onclick = () => onClick(m.id, m.name);
                     c.appendChild(div);
                 });
@@ -432,7 +332,17 @@ def home():
             }
             function closeImgSettings() { document.getElementById("imgModal").style.display = "none"; }
 
-            // --- UI HELPERS & COPY BUTTON ---
+            // --- HELPER: SAFE TEXT EXTRACTION FROM PUTER ---
+            function extractText(res) {
+                // Claude sometimes returns array, sometimes string
+                if (typeof res === 'string') return res;
+                if (res?.message?.content) {
+                    if (Array.isArray(res.message.content)) return res.message.content[0].text;
+                    return res.message.content;
+                }
+                return JSON.stringify(res);
+            }
+
             function addCopyBtns(element) {
                 element.querySelectorAll('pre').forEach(pre => {
                     if(pre.querySelector('.copy-btn')) return;
@@ -456,8 +366,7 @@ def home():
                 d.className = "msg " + type;
                 if(typeof content === 'string') {
                     let cDiv = document.createElement("div");
-                    if(isHtml) cDiv.innerHTML = content;
-                    else cDiv.innerText = content;
+                    if(isHtml) cDiv.innerHTML = content; else cDiv.innerText = content;
                     d.appendChild(cDiv);
                     if(type === 'ai') addCopyBtns(cDiv);
                 } else d.appendChild(content);
@@ -471,15 +380,62 @@ def home():
                 c.appendChild(d); c.scrollTop = c.scrollHeight;
             }
 
-            function addLoading() {
+            function addLoading(text="Thinking...") {
                 let d = document.createElement("div"); d.className="msg ai loading"; d.id="load";
-                d.innerHTML='Thinking <div class="spinner"></div>';
+                d.innerHTML = `${text} <div class="spinner"></div>`;
                 document.getElementById("chat").appendChild(d);
                 document.getElementById("chat").scrollTop = document.getElementById("chat").scrollHeight;
             }
             function removeLoading() { let e=document.getElementById("load"); if(e) e.remove(); }
 
-            // --- CORE LOGIC (HYBRID) ---
+            // --- CLIENT-SIDE DIRECTOR MODE (ENSEMBLE) ---
+            async function runDirectorMode(prompt) {
+                addLoading("Consulting Experts...");
+                
+                const experts = [
+                    { model: 'gpt-5.2-pro', name: 'GPT-5.2 Pro' },
+                    { model: 'claude-opus-4-5', name: 'Claude Opus 4.5' },
+                    { model: 'gemini-3-pro-preview', name: 'Gemini 3 Pro' }
+                ];
+
+                try {
+                    // 1. Parallel Expert Calls
+                    const promises = experts.map(exp => 
+                        puter.ai.chat(prompt, { model: exp.model })
+                            .then(res => `--- Expert: ${exp.name} ---\n${extractText(res)}\n`)
+                            .catch(err => `--- Expert: ${exp.name} ---\nFailed: ${err}\n`)
+                    );
+                    
+                    const results = await Promise.all(promises);
+                    const rawData = results.join("\n");
+
+                    // 2. Synthesis (Gemini 3 Pro)
+                    removeLoading();
+                    addLoading("Synthesizing Final Answer...");
+                    
+                    const finalPrompt = `
+                        USER QUERY: ${prompt}
+                        
+                        EXPERTS OPINIONS:
+                        ${rawData}
+                        
+                        INSTRUCTION: You are the Director. Combine these expert opinions into one single, masterfully written, perfect response. 
+                        Do not mention 'Draft 1' or 'the experts'. Just write the best answer possible.
+                    `;
+
+                    const synthesis = await puter.ai.chat(finalPrompt, { model: 'gemini-3-pro-preview' });
+                    const finalText = extractText(synthesis);
+
+                    removeLoading();
+                    addMsg(marked.parse(finalText), "ai", true);
+                    
+                } catch (e) {
+                    removeLoading();
+                    addMsg("Director Mode Failed: " + e, "ai");
+                }
+            }
+
+            // --- MAIN CHAT LOGIC ---
             const txtIn = document.getElementById("prompt");
             txtIn.addEventListener("keydown", function(e) { 
                 if(e.key === "Enter" && !e.shiftKey) { 
@@ -495,9 +451,9 @@ def home():
                 addMsg(t, "user");
                 txtIn.value = "";
                 
-                // Image Generation
+                // 1. Image Generation
                 if (t.toLowerCase().startsWith("/image") || t.toLowerCase().includes("generate image")) {
-                    addLoading();
+                    addLoading("Painting...");
                     try {
                         let prompt = t.replace("/image", "").trim();
                         let img = await puter.ai.txt2img(prompt, { model: selectedImgModel });
@@ -507,31 +463,34 @@ def home():
                         let dl = document.createElement("a"); dl.className="download-btn"; dl.innerHTML='<i class="fa-solid fa-download"></i>';
                         dl.href = img.src; dl.download="ai-image.png"; div.appendChild(dl);
                         addMsg(div, "ai");
-                        chatHistory.push({ role: "model", parts: [{ text: "[Image Generated]" }] });
                     } catch(e) { removeLoading(); addMsg("Error: "+e, "ai"); }
+                    return;
+                }
+
+                // 2. Director Mode (Client-Side Ensemble)
+                if (dtEnabled) {
+                    await runDirectorMode(t);
                     return;
                 }
 
                 addLoading();
                 
-                // HYBRID ROUTING
-                if (pythonModels.includes(selectedChatModel) || selectedChatModel.includes("gemma")) {
-                    // Send to Server (Markdown2)
-                    let p = { prompt: t, history: chatHistory, model: selectedChatModel, deep_think: (selectedChatModel==="director-mode") };
+                // 3. Normal Routing
+                const serverModels = ["gemini-3-flash-preview", "gemma-3-27b-it"];
+                
+                if (serverModels.includes(selectedChatModel)) {
+                    // Python Server (Your Key)
+                    let p = { prompt: t, history: chatHistory, model: selectedChatModel };
                     if(imgBase64) { p.image = imgBase64; imgBase64 = null; document.getElementById('previewContainer').style.display='none'; }
                     
-                    chatHistory.push({ role: "user", parts: [{ text: t }] }); 
-
                     fetch("/process_text", {
                         method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(p)
                     }).then(r=>r.json()).then(d => {
                         removeLoading();
-                        chatHistory.push({ role: "model", parts: [{ text: d.text }] });
-                        addMsg(d.html, "ai", true); 
+                        addMsg(d.html || d.text, "ai", true); 
                     });
-                
                 } else {
-                    // Send to Puter (Client)
+                    // Puter.js (Client Keyless)
                     try {
                         let response;
                         if (imgBase64) {
@@ -542,13 +501,8 @@ def home():
                         }
                         
                         removeLoading();
-                        let text = response.message?.content || response.toString();
-                        
-                        // Use Marked.js for Puter responses
+                        let text = extractText(response);
                         addMsg(marked.parse(text), "ai", true); 
-                        
-                        chatHistory.push({ role: "user", parts: [{ text: t }] });
-                        chatHistory.push({ role: "model", parts: [{ text: text }] });
 
                     } catch(e) {
                         removeLoading();
@@ -571,7 +525,7 @@ def home():
                 document.getElementById('callStatus').innerText = "Connecting...";
                 
                 try {
-                    audioContext = new (window.AudioContext||window.webkitAudioContext)({sampleRate:24000});
+                    audioCtx = new (window.AudioContext||window.webkitAudioContext)({sampleRate:24000});
                     let stream = await navigator.mediaDevices.getUserMedia({audio:{sampleRate:16000, channelCount:1}});
                     let proto = location.protocol==='https:'?'wss:':'ws:';
                     ws = new WebSocket(`${proto}//${location.host}/ws/live`);
@@ -601,13 +555,13 @@ def home():
                 let float32=new Float32Array(new Int16Array(bytes.buffer).length);
                 let int16=new Int16Array(bytes.buffer);
                 for(let i=0; i<int16.length; i++) float32[i]=int16[i]/32768;
-                let buf=audioContext.createBuffer(1, float32.length, 24000);
+                let buf=audioCtx.createBuffer(1, float32.length, 24000);
                 buf.getChannelData(0).set(float32);
-                let src=audioContext.createBufferSource(); src.buffer=buf; src.connect(audioContext.destination); src.start();
+                let src=audioCtx.createBufferSource(); src.buffer=buf; src.connect(audioCtx.destination); src.start();
             }
 
             function endCall() {
-                if(ws) ws.close(); if(mediaRecorder) mediaRecorder.stop(); if(audioContext) audioContext.close();
+                if(ws) ws.close(); if(mediaRecorder) mediaRecorder.stop(); if(audioCtx) audioCtx.close();
                 document.getElementById('callModal').style.display='none';
             }
             
@@ -630,19 +584,36 @@ def home():
 @app.route('/process_text', methods=['POST'])
 def process_text():
     data = request.json
-    
     history = data.get('history', [])
     prompt = data.get('prompt')
     m = data.get('model')
-    dt = data.get('deep_think')
     img = data.get('image')
     
-    if not history:
-        history = [{"role": "user", "parts": [{"text": prompt}]}]
+    # Server side text processing handles server models only now
+    from flask import current_app
     
-    text_res = call_ai_text(m, history, img, dt)
-    html = parse_markdown(text_res)
-    return jsonify({"text": text_res, "html": html})
+    # Simple direct call to server models
+    def try_chain(model_id, payload):
+        # Determine chain (Gemini or Gemma)
+        models = ["gemini-3-flash-preview"] # Default fallback
+        if "gemma" in model_id: models = ["gemma-3-27b-it", "gemma-3-12b-it"]
+        elif "gemini" in model_id: models = ["gemini-3-flash-preview", "gemini-2.5-flash"]
+        
+        for m in models:
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/{m}:generateContent?key={GEMINI_KEY}"
+            try:
+                r = requests.post(url, json=payload)
+                if r.status_code==200: return r.json()["candidates"][0]["content"]["parts"][0]["text"]
+            except: continue
+        return "Error: Server models unavailable."
+
+    if image_data := img:
+        history.append({"role": "user", "parts": [{"text": prompt}, {"inline_data": {"mime_type": "image/jpeg", "data": image_data}}]})
+    else:
+        history.append({"role": "user", "parts": [{"text": prompt}]})
+
+    res = try_chain(m, {"contents": history})
+    return jsonify({"text": res, "html": parse_markdown(res)})
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000)
