@@ -18,8 +18,7 @@ sock = Sock(app)
 # --- CONFIGURATION ---
 GEMINI_KEY = os.environ.get("GEMINI_KEY")
 
-# --- SERVER-SIDE MODEL CHAINS (Your Specific Google Models) ---
-# These run on YOUR server via Google API
+# --- SERVER-SIDE MODEL CHAINS ---
 MODEL_CHAINS = {
     "GEMINI": [
         "gemini-3-flash-preview", 
@@ -42,7 +41,6 @@ MODEL_CHAINS = {
         "gemma-3-4b-it",
         "gemma-3-2b-it"
     ],
-    # Native Audio requires 2.0-Flash-Exp for reliable WebSocket streaming
     "NATIVE_AUDIO": ["gemini-2.0-flash-exp"], 
     "NEURAL_TTS": ["gemini-2.5-flash-tts"]
 }
@@ -204,13 +202,13 @@ def home():
     <!DOCTYPE html>
     <html lang="en">
     <head>
-        <title>Omni-Chat</title>
+        <title>Omni-Chat Live</title>
         <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
         <meta name="theme-color" content="#050508">
         <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;500;700&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
         <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
         
-        <!-- Puter.js (The Magic for Extra Models) -->
+        <!-- Puter.js -->
         <script src="https://js.puter.com/v2/"></script>
 
         <style>
@@ -229,13 +227,10 @@ def home():
             .dot { width: 8px; height: 8px; background: var(--primary); border-radius: 50%; box-shadow: 0 0 10px var(--primary); animation: pulse 2s infinite; }
             @keyframes pulse { 0% { opacity: 1; } 50% { opacity: 0.5; } }
 
-            /* DROPDOWN SELECTOR */
             .model-select {
                 background: rgba(0,0,0,0.3); border: 1px solid var(--border); border-radius: 20px; 
                 color: #aaa; padding: 5px 15px; font-size: 12px; cursor: pointer; display: flex; align-items: center; gap: 5px;
-                transition: 0.2s;
             }
-            .model-select:hover { border-color: var(--primary); color: white; }
 
             .dt-toggle { font-size: 11px; color: #888; display: flex; align-items: center; gap: 5px; cursor: pointer; }
             .dt-box { width: 14px; height: 14px; border: 1px solid #555; border-radius: 3px; display: flex; align-items: center; justify-content: center; transition: 0.3s; }
@@ -310,7 +305,7 @@ def home():
             </div>
         </div>
 
-        <div class="chat" id="chat"><div class="msg ai">Online. Hybrid Architecture (Python + Puter.js).</div></div>
+        <div class="chat" id="chat"><div class="msg ai">Online. Using Puter.js + Gemini 3.0.</div></div>
 
         <div class="input-area">
             <input type="file" id="fileInput" accept="image/*" onchange="handleFile(this)">
@@ -358,13 +353,15 @@ def home():
             let imgBase64 = null;
             let chatHistory = [];
 
-            // --- MODEL LISTS (Hybrid) ---
+            // --- MODEL LISTS ---
+            // Python Backend Models
             const pythonModels = ["gemini-3-flash-preview", "gemini-2.0-flash-exp", "gemini-1.5-pro", "gemini-1.5-flash", "gemma-2-27b-it", "director-mode"];
             
             const chatModels = [
                 {id: "gemini-3-flash-preview", name: "Gemini 3.0", tag: "⚡ GOOGLE"},
+                {id: "gpt-5.2-pro", name: "GPT-5.2 Pro", tag: "👑 ULTIMATE"},
                 {id: "director-mode", name: "Director Mode", tag: "🎬 DEEP THINK"},
-                {id: "gemma-3-27b-it", name: "Gemma 3 27B", tag: "🔓 OPEN"},
+                {id: "gemma-2-27b-it", name: "Gemma 2 27B", tag: "🔓 OPEN"},
                 {id: "gpt-5-nano", name: "GPT-5 Nano", tag: "⚡ PUTER"},
                 {id: "gpt-5.2", name: "GPT-5.2", tag: "🧠 PUTER"},
                 {id: "o3", name: "OpenAI o3", tag: "🤯 PUTER"},
@@ -438,12 +435,22 @@ def home():
             function removeLoading() { let e=document.getElementById("load"); if(e) e.remove(); }
 
             // --- CORE LOGIC (HYBRID) ---
+            
+            // KEY FIX: Define txtIn globally for event listener
+            const txtIn = document.getElementById("prompt");
+            txtIn.addEventListener("keydown", function(e) { 
+                if(e.key === "Enter" && !e.shiftKey) { 
+                    e.preventDefault(); 
+                    sendText(); 
+                } 
+            });
+
             async function sendText() {
-                let t = document.getElementById("prompt").value.trim();
+                let t = txtIn.value.trim();
                 if(!t && !imgBase64) return;
                 
                 addMsg(t, "user");
-                document.getElementById("prompt").value = "";
+                txtIn.value = "";
                 
                 // Image Generation
                 if (t.toLowerCase().startsWith("/image") || t.toLowerCase().includes("generate image")) {
