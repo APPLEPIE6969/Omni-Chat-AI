@@ -5,7 +5,7 @@ import asyncio
 import requests
 import markdown2
 import io
-# import numpy as np # Keep commented out to prevent render crashes if not needed
+import numpy as np # Required for Audio processing
 from flask import Flask, request, jsonify
 from flask_sock import Sock
 from gtts import gTTS
@@ -41,7 +41,8 @@ MODEL_CHAINS = {
         "gemma-3-4b-it",
         "gemma-3-2b-it"
     ],
-    "NATIVE_AUDIO": ["gemini-2.5-flash-native-audio-dialog"], 
+    # Live WebSocket requires 2.0-Flash-Exp specifically
+    "NATIVE_AUDIO": ["gemini-2.0-flash-exp"], 
     "NEURAL_TTS": ["gemini-2.5-flash-tts"]
 }
 
@@ -92,15 +93,19 @@ def director_review_process(last_user_prompt, initial_response):
     payload = { "contents": [{ "parts": parts }] }
     return try_model_chain("DIRECTOR", payload)
 
-# --- REST AI CALLER (With Memory) ---
+# --- REST AI CALLER (With Memory Fix) ---
 def call_ai_text(model_id, history, image_data=None, deep_think=False):
     chain_key = model_id if model_id in MODEL_CHAINS else "GEMINI"
     
-    # Check for image and attach to last message
-    if image_data:
-        if history and history[-1]['role'] == 'user':
-            history[-1]['parts'].append({ "inline_data": { "mime_type": "image/jpeg", "data": image_data } })
+    # 1. Attach Image to History if exists
+    if image_data and history:
+        # Find the last user message to attach the image to
+        for msg in reversed(history):
+            if msg['role'] == 'user':
+                msg['parts'].append({ "inline_data": { "mime_type": "image/jpeg", "data": image_data } })
+                break
 
+    # 2. Prepare Payload with FULL HISTORY
     payload = { 
         "contents": history,
         "system_instruction": {
@@ -108,13 +113,20 @@ def call_ai_text(model_id, history, image_data=None, deep_think=False):
         }
     }
     
+    # 3. Get Response
     response_text = try_model_chain(chain_key, payload)
     
+    # 4. Deep Think Logic
     if deep_think and not response_text.startswith("Error:"):
         last_prompt = "User Input"
+        # Extract text from the last user message for context
         try:
-            last_prompt = history[-1]['parts'][0]['text']
+            for msg in reversed(history):
+                if msg['role'] == 'user':
+                    last_prompt = msg['parts'][0]['text']
+                    break
         except: pass
+        
         response_text = director_review_process(last_prompt, response_text)
     
     return response_text
@@ -126,6 +138,7 @@ def generate_tts():
     if not text: return jsonify({"error": "No text"}), 400
 
     try:
+        # Using gTTS as requested
         tts = gTTS(text=text, lang='en')
         fp = io.BytesIO()
         tts.write_to_fp(fp)
@@ -140,8 +153,8 @@ def generate_tts():
 def live_socket(ws):
     client = genai.Client(api_key=GEMINI_KEY, http_options={'api_version': 'v1alpha'})
     
-    # 2.0 Flash Exp is required for SDK Live Streaming currently
-    LIVE_MODEL = "gemini-2.0-flash-exp"
+    # Using the first model from NATIVE_AUDIO chain (gemini-2.0-flash-exp)
+    LIVE_MODEL = MODEL_CHAINS["NATIVE_AUDIO"][0]
     
     config = types.LiveConnectConfig(
         response_modalities=["AUDIO"], 
@@ -156,6 +169,7 @@ def live_socket(ws):
                 async def send_audio():
                     while True:
                         try:
+                            # Use executor to make ws.receive non-blocking
                             data = await asyncio.to_thread(ws.receive)
                             if not data: break
                             msg = json.loads(data)
@@ -235,7 +249,7 @@ def home():
             .img-prev { max-width: 100%; border-radius: 10px; margin-top: 5px; display: block; }
             @keyframes pop { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
 
-            /* LOADING INDICATOR (Restored) */
+            /* LOADING INDICATOR */
             .loading { display: flex; align-items: center; gap: 8px; color: #aaa; font-style: italic; padding: 10px 16px; background: transparent; border: none; }
             .spinner { width: 14px; height: 14px; border: 2px solid var(--primary); border-top-color: transparent; border-radius: 50%; animation: spin 1s linear infinite; }
             @keyframes spin { to { transform: rotate(360deg); } }
@@ -273,6 +287,7 @@ def home():
             #fileInput, #previewContainer { display: none; }
             #previewContainer { position: absolute; bottom: 60px; left: 15px; }
             #imageUploadPreview { width: 60px; height: 60px; border-radius: 10px; object-fit: cover; border: 2px solid var(--primary); }
+
         </style>
     </head>
     <body>
@@ -408,7 +423,7 @@ def home():
                 let t = txtIn.value.trim();
                 if(!t && !imgBase64) return;
                 
-                // Update History
+                // Update History (User)
                 chatHistory.push({ role: "user", parts: [{ text: t }] });
                 
                 addMsg(t, "user");
@@ -550,6 +565,7 @@ def process_text():
     dt = data.get('deep_think')
     img = data.get('image')
     
+    # If no history (first message), create it
     if not history:
         history = [{"role": "user", "parts": [{"text": prompt}]}]
     
