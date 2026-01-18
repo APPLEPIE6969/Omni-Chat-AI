@@ -20,7 +20,6 @@ sock = Sock(app)
 GEMINI_KEY = os.environ.get("GEMINI_KEY")
 
 # --- SERVER-SIDE CONFIG ---
-# Kept for Live Audio / TTS
 MODEL_CHAINS = {
     "NATIVE_AUDIO": ["gemini-2.0-flash-exp"], 
     "NEURAL_TTS": ["gemini-2.5-flash-tts"]
@@ -81,9 +80,8 @@ def live_socket(ws):
 
 @app.route('/process_text', methods=['POST'])
 def process_text():
-    # Only used if we need server-side parsing, mostly client-side now
     data = request.json
-    # Return raw text so client-side marked.js handles it, or parse here if needed
+    # Basic server echo if needed, main logic is client-side
     return jsonify({"text": "OK"})
 
 # --- WEB SERVER ---
@@ -176,13 +174,13 @@ def home():
         <div class="header">
             <div class="top">
                 <div class="brand"><div class="dot"></div> Omni-Chat</div>
-                <!-- FIXED: INLINE ONCLICK (Guaranteed to work) -->
+                <!-- MODEL BUTTON: INLINE ONCLICK RESTORED -->
                 <div class="model-select" onclick="openModelModal()">
                     <span id="currentModelDisplay">Gemini 3.0</span> <i class="fa-solid fa-chevron-down"></i>
                 </div>
             </div>
-            <!-- FIXED: DIRECTOR TOGGLE (Guaranteed to work) -->
-            <div class="dt-toggle" id="dtToggle" onclick="toggleDirectorMode()">
+            <!-- DIRECTOR TOGGLE: INLINE ONCLICK RESTORED -->
+            <div class="dt-toggle" id="dtToggle" onclick="toggleDT()">
                 <div class="dt-box"><i class="fa-solid fa-check" style="display:none" id="dtCheck"></i></div> Director Mode (Ensemble)
             </div>
         </div>
@@ -193,7 +191,7 @@ def home():
             <input type="file" id="fileInput" accept="image/*" onchange="handleFile(this)">
             <div id="previewContainer"><img id="imageUploadPreview"></div>
             
-            <!-- FIXED: INLINE ONCLICK -->
+            <!-- BUTTONS: INLINE ONCLICK RESTORED -->
             <button class="icon-btn" onclick="openImgModal()"><i class="fa-solid fa-palette"></i></button>
             <button class="icon-btn" onclick="document.getElementById('fileInput').click()"><i class="fa-solid fa-paperclip"></i></button>
             
@@ -233,25 +231,18 @@ def home():
         <audio id="audioPlayer" style="display:none"></audio>
 
         <script>
-            // --- DATA CONFIGURATION (Your Full List) ---
+            // --- DATA CONFIGURATION ---
             const chatModels = [
-                // Server (Native)
                 {id: "gemini-3-flash-preview", name: "Gemini 3.0", tag: "⚡ GOOGLE"},
                 {id: "gemma-3-27b-it", name: "Gemma 3 27B", tag: "🔓 OPEN"},
-                
-                // Puter - OpenAI
                 {id: "gpt-5.2-codex", name: "GPT 5.2 Codex", tag: "💻 CODE"},
                 {id: "gpt-5.2-pro", name: "GPT 5.2 Pro", tag: "👑 ULTIMATE"},
                 {id: "gpt-5-nano", name: "GPT-5 Nano", tag: "⚡ FAST"},
                 {id: "o3", name: "OpenAI o3", tag: "🤯 REASON"},
                 {id: "gpt-4o", name: "GPT-4o", tag: "🔥 BEST"},
-                
-                // Puter - Claude Suite (Full)
                 {id: "claude-opus-4-5", name: "Claude Opus 4.5", tag: "💎 OPUS"},
                 {id: "claude-sonnet-4-5", name: "Claude Sonnet 4.5", tag: "📚 SONNET"},
                 {id: "claude-haiku-4-5", name: "Claude Haiku 4.5", tag: "💨 HAIKU"},
-                
-                // Puter - Gemini Suite (Full)
                 {id: "gemini-3-pro-preview", name: "Gemini 3 Pro", tag: "🧠 PUTER"},
                 {id: "gemini-2.5-pro", name: "Gemini 2.5 Pro", tag: "⭐ PUTER"},
                 {id: "gemini-2.5-flash", name: "Gemini 2.5 Flash", tag: "⚡ PUTER"}
@@ -273,8 +264,8 @@ def home():
             let imgBase64 = null;
             let chatHistory = [];
 
-            // --- UI FUNCTIONS (Global Scope) ---
-            function toggleDirectorMode() {
+            // --- UI FUNCTIONS ---
+            function toggleDT() {
                 dtEnabled = !dtEnabled;
                 const el = document.getElementById("dtToggle");
                 const icon = document.getElementById("dtCheck");
@@ -289,37 +280,33 @@ def home():
                 }
             }
 
-            function openModelModal() {
-                const c = document.getElementById("chatModelList");
+            function renderList(list, containerId, currentVal, onClick) {
+                const c = document.getElementById(containerId);
                 c.innerHTML = "";
-                chatModels.forEach(m => {
+                list.forEach(m => {
                     let div = document.createElement("div");
-                    div.className = `modal-item ${m.id === selectedChatModel ? 'selected' : ''}`;
+                    div.className = `modal-item ${m.id === currentVal ? 'selected' : ''}`;
                     let tagClass = m.tag.includes('OPUS') ? 'opus' : (m.tag.includes('GOOGLE')?'fast':'best');
                     div.innerHTML = `<span>${m.name}</span> <span class="tag ${tagClass}">${m.tag}</span>`;
-                    div.onclick = () => {
-                        selectedChatModel = m.id;
-                        document.getElementById("currentModelDisplay").innerText = m.name;
-                        closeModelModal();
-                    };
+                    div.onclick = () => onClick(m.id, m.name);
                     c.appendChild(div);
+                });
+            }
+
+            function openModelModal() {
+                renderList(chatModels, "chatModelList", selectedChatModel, (id, name) => {
+                    selectedChatModel = id;
+                    document.getElementById("currentModelDisplay").innerText = name;
+                    closeModelModal();
                 });
                 document.getElementById("modelModal").style.display = "flex";
             }
             function closeModelModal() { document.getElementById('modelModal').style.display='none'; }
 
             function openImgModal() {
-                const c = document.getElementById("imgModelList");
-                c.innerHTML = "";
-                imgModels.forEach(m => {
-                    let div = document.createElement("div");
-                    div.className = `modal-item ${m.id === selectedImgModel ? 'selected' : ''}`;
-                    div.innerHTML = `<span>${m.name}</span> <span class="tag">${m.tag}</span>`;
-                    div.onclick = () => {
-                        selectedImgModel = m.id;
-                        closeImgSettings();
-                    };
-                    c.appendChild(div);
+                renderList(imgModels, "imgModelList", selectedImgModel, (id, name) => {
+                    selectedImgModel = id;
+                    closeImgSettings();
                 });
                 document.getElementById("imgModal").style.display = "flex";
             }
@@ -353,7 +340,7 @@ def home():
                 });
             }
 
-            function addMsg(content, type) {
+            function addMsg(content, type, isHtml=false) {
                 let d = document.createElement("div");
                 d.className = "msg " + type;
                 if(typeof content === 'string') {
@@ -391,20 +378,21 @@ def home():
                 ];
 
                 try {
-                    // 1. Parallel Requests
+                    // Parallel Requests
                     const promises = experts.map(exp => 
                         puter.ai.chat(prompt, { model: exp.model })
-                            .then(res => `--- Expert: ${exp.name} ---\n${extractText(res)}\n`)
-                            .catch(err => `--- Expert: ${exp.name} ---\nFailed: ${err}\n`)
+                            .then(res => `--- Expert: ${exp.name} ---\\n${extractText(res)}\\n`) // ESCAPED NEWLINES
+                            .catch(err => `--- Expert: ${exp.name} ---\\nFailed: ${err}\\n`)
                     );
                     
                     const results = await Promise.all(promises);
-                    const rawData = results.join("\n");
+                    const rawData = results.join("\\n"); // ESCAPED NEWLINE
 
-                    // 2. Synthesis (Gemini 3 Pro)
+                    // Synthesis
                     removeLoading();
                     addLoading("Synthesizing Final Answer...");
                     
+                    // Template literal safe because we use escaped newlines in rawData
                     const finalPrompt = `
                         USER QUERY: ${prompt}
                         
