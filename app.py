@@ -12,12 +12,14 @@ from flask_sock import Sock
 from gtts import gTTS
 from google import genai
 from google.genai import types
+from groq import Groq
 
 app = Flask(__name__)
 sock = Sock(app)
 
 # --- CONFIGURATION ---
 GEMINI_KEY = os.environ.get("GEMINI_KEY")
+GROQ_API_KEY = os.environ.get("GROQ")
 SKYREELS_API_KEY = os.environ.get("SKYREELS")
 
 # --- SERVER-SIDE CONFIG ---
@@ -293,7 +295,13 @@ def home():
                 {id: "claude-haiku-4-5", name: "Claude Haiku 4.5", tag: "💨 HAIKU"},
                 {id: "gemini-3-pro-preview", name: "Gemini 3 Pro", tag: "🧠 PUTER"},
                 {id: "gemini-2.5-pro", name: "Gemini 2.5 Pro", tag: "⭐ PUTER"},
-                {id: "gemini-2.5-flash", name: "Gemini 2.5 Flash", tag: "⚡ PUTER"}
+                {id: "gemini-2.5-flash", name: "Gemini 2.5 Flash", tag: "⚡ PUTER"},
+                {id: "gemma-3-1b", name: "Gemma 3 1B", tag: "💎 GROQ"},
+                {id: "gemma-3-27b", name: "Gemma 3 27B", tag: "💎 GROQ"},
+                {id: "gemma-3-2b", name: "Gemma 3 2B", tag: "💎 GROQ"},
+                {id: "gemma-3-4b", name: "Gemma 3 4B", tag: "💎 GROQ"},
+                {id: "gemini-embedding-1.0", name: "Gemini Embedding 1.0", tag: "📊 GOOGLE"},
+                {id: "gemini-2.5-flash-native-audio-dialog", name: "Gemini 2.5 Flash Native Audio", tag: "🎤 GOOGLE"}
             ];
 
             const imgModels = [
