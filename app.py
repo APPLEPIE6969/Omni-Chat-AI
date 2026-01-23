@@ -18,6 +18,7 @@ sock = Sock(app)
 
 # --- CONFIGURATION ---
 GEMINI_KEY = os.environ.get("GEMINI_KEY")
+SKYREELS_API_KEY = os.environ.get("SKYREELS")
 
 # --- SERVER-SIDE CONFIG ---
 MODEL_CHAINS = {
@@ -83,6 +84,41 @@ def process_text():
     data = request.json
     # Basic server echo if needed, main logic is client-side
     return jsonify({"text": "OK"})
+
+@app.route('/generate_video', methods=['POST'])
+def generate_video():
+    if not SKYREELS_API_KEY:
+        return jsonify({"error": "SKYREELS_API_KEY not configured"}), 500
+    
+    prompt = request.json.get('prompt')
+    if not prompt:
+        return jsonify({"error": "No prompt provided"}), 400
+    
+    try:
+        # Call SKYREELS API
+        headers = {
+            'Authorization': f'Bearer {SKYREELS_API_KEY}',
+            'Content-Type': 'application/json'
+        }
+        
+        # SKYREELS API endpoint (this is a placeholder - actual endpoint may vary)
+        response = requests.post(
+            'https://api.skyreels.ai/v1/generate',
+            headers=headers,
+            json={'prompt': prompt, 'duration': 5}  # 5 second video
+        )
+        
+        if response.status_code == 200:
+            result = response.json()
+            return jsonify({
+                "video_url": result.get('video_url'),
+                "status": "success"
+            })
+        else:
+            return jsonify({"error": f"SKYREELS API error: {response.status_code}"}), 500
+            
+    except Exception as e:
+        return jsonify({"error": f"Video generation failed: {str(e)}"}), 500
 
 # --- WEB SERVER ---
 @app.route('/')
@@ -193,6 +229,7 @@ def home():
             
             <!-- BUTTONS: INLINE ONCLICK RESTORED -->
             <button class="icon-btn" onclick="openImgModal()"><i class="fa-solid fa-palette"></i></button>
+            <button class="icon-btn" onclick="openVideoModal()"><i class="fa-solid fa-film"></i></button>
             <button class="icon-btn" onclick="document.getElementById('fileInput').click()"><i class="fa-solid fa-paperclip"></i></button>
             
             <div class="txt-box"><textarea id="prompt" placeholder="Message..." rows="1"></textarea></div>
@@ -214,6 +251,17 @@ def home():
             <div class="modal-content">
                 <div style="display:flex; justify-content:space-between; align-items:center;"><h3>Image Model</h3><div class="close-btn" onclick="closeImgSettings()">&times;</div></div>
                 <div id="imgModelList"></div>
+            </div>
+        </div>
+
+        <!-- VIDEO MODAL -->
+        <div class="modal" id="videoModal">
+            <div class="modal-content">
+                <div style="display:flex; justify-content:space-between; align-items:center;"><h3>Video Generation</h3><div class="close-btn" onclick="closeVideoModal()">&times;</div></div>
+                <div style="text-align:center; padding:20px;">
+                    <p style="color:#aaa; margin-bottom:20px;">Generate videos using SKYREELS</p>
+                    <button onclick="generateVideo()" style="background:var(--primary); color:#000; border:none; padding:15px 30px; border-radius:30px; font-weight:bold; cursor:pointer;">Generate Video</button>
+                </div>
             </div>
         </div>
 
@@ -311,6 +359,57 @@ def home():
                 document.getElementById("imgModal").style.display = "flex";
             }
             function closeImgSettings() { document.getElementById('imgModal').style.display='none'; }
+
+            function openVideoModal() {
+                document.getElementById("videoModal").style.display = "flex";
+            }
+            function closeVideoModal() { document.getElementById('videoModal').style.display='none'; }
+
+            async function generateVideo() {
+                let t = txtIn.value.trim();
+                if(!t) {
+                    addMsg("Please enter a prompt for video generation.", "ai");
+                    return;
+                }
+                
+                addLoading("Generating video with SKYREELS...");
+                try {
+                    const response = await fetch("/generate_video", {
+                        method: "POST",
+                        headers: {"Content-Type": "application/json"},
+                        body: JSON.stringify({prompt: t})
+                    });
+                    
+                    const result = await response.json();
+                    removeLoading();
+                    
+                    if(result.status === "success" && result.video_url) {
+                        let div = document.createElement("div");
+                        div.className = "img-wrapper";
+                        let video = document.createElement("video");
+                        video.src = result.video_url;
+                        video.controls = true;
+                        video.style.width = "100%";
+                        video.style.height = "auto";
+                        video.style.borderRadius = "12px";
+                        div.appendChild(video);
+                        
+                        let dl = document.createElement("a");
+                        dl.className = "download-btn";
+                        dl.innerHTML = '<i class="fa-solid fa-download"></i>';
+                        dl.href = result.video_url;
+                        dl.download = "ai-video.mp4";
+                        div.appendChild(dl);
+                        
+                        addMsg(div, "ai");
+                    } else {
+                        addMsg("Video generation failed: " + (result.error || "Unknown error"), "ai");
+                    }
+                } catch(e) {
+                    removeLoading();
+                    addMsg("Video generation error: " + e, "ai");
+                }
+            }
 
             // --- HELPERS ---
             function extractText(res) {
@@ -428,7 +527,8 @@ def home():
                 addMsg(t, "user");
                 txtIn.value = "";
                 
-                // 1. Image Generation
+
+                // 2. Image Generation
                 if (t.toLowerCase().startsWith("/image") || t.toLowerCase().includes("generate image")) {
                     addLoading("Painting...");
                     try {
