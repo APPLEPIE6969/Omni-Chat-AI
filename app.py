@@ -330,9 +330,50 @@ def home():
         <div class="modal" id="videoModal">
             <div class="modal-content">
                 <div style="display:flex; justify-content:space-between; align-items:center;"><h3>Video Generation</h3><div class="close-btn" onclick="closeVideoModal()">&times;</div></div>
-                <div style="text-align:center; padding:20px;">
-                    <p style="color:#aaa; margin-bottom:20px;">Generate videos using SKYREELS</p>
-                    <button onclick="generateVideo()" style="background:var(--primary); color:#000; border:none; padding:15px 30px; border-radius:30px; font-weight:bold; cursor:pointer;">Generate Video</button>
+                <div style="padding:20px;">
+                    <p style="color:#aaa; margin-bottom:20px;">Generate videos using SKYREELS with optional reference images</p>
+                    
+                    <!-- Prompt Input -->
+                    <div style="margin-bottom:20px;">
+                        <label style="display:block; color:#aaa; font-size:12px; margin-bottom:8px;">Video Prompt</label>
+                        <textarea id="videoPrompt" style="width:100%; background:rgba(0,0,0,0.4); border:1px solid var(--border); padding:12px; border-radius:12px; color:#fff; font-size:14px; resize:none; height:80px;" placeholder="Describe the video you want to generate..."></textarea>
+                    </div>
+                    
+                    <!-- Image Upload -->
+                    <div style="margin-bottom:20px;">
+                        <label style="display:block; color:#aaa; font-size:12px; margin-bottom:8px;">Reference Images (Optional)</label>
+                        <div style="display:flex; gap:10px; align-items:center;">
+                            <input type="file" id="videoImageInput" accept="image/*" onchange="handleVideoImage(this)" style="display:none;">
+                            <button onclick="document.getElementById('videoImageInput').click()" style="background:rgba(255,255,255,0.1); border:1px solid var(--border); color:#aaa; padding:10px 15px; border-radius:8px; cursor:pointer; font-size:12px;">Upload Image</button>
+                            <span id="videoImageCount" style="color:#888; font-size:12px;">No images selected</span>
+                        </div>
+                        <div id="videoImagePreview" style="display:flex; gap:10px; margin-top:10px; flex-wrap:wrap;"></div>
+                    </div>
+                    
+                    <!-- Parameters -->
+                    <div style="margin-bottom:20px;">
+                        <label style="display:block; color:#aaa; font-size:12px; margin-bottom:8px;">Video Parameters</label>
+                        <div style="display:flex; gap:15px; align-items:center;">
+                            <div style="flex:1;">
+                                <label style="display:block; color:#888; font-size:11px; margin-bottom:4px;">Duration (1-5s)</label>
+                                <input type="range" id="videoDuration" min="1" max="5" value="5" style="width:100%; cursor:pointer;">
+                                <div style="text-align:center; color:#888; font-size:11px;" id="durationValue">5 seconds</div>
+                            </div>
+                            <div style="flex:1;">
+                                <label style="display:block; color:#888; font-size:11px; margin-bottom:4px;">Aspect Ratio</label>
+                                <select id="videoAspectRatio" style="width:100%; background:rgba(0,0,0,0.4); border:1px solid var(--border); color:#fff; padding:8px; border-radius:8px; font-size:12px;">
+                                    <option value="16:9">16:9 (Landscape)</option>
+                                    <option value="9:16">9:16 (Portrait)</option>
+                                    <option value="3:4">3:4 (Portrait)</option>
+                                    <option value="4:3">4:3 (Landscape)</option>
+                                    <option value="1:1">1:1 (Square)</option>
+                                </select>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Generate Button -->
+                    <button onclick="generateVideoFromModal()" style="background:var(--primary); color:#000; border:none; padding:15px 30px; border-radius:30px; font-weight:bold; cursor:pointer; width:100%;">Generate Video</button>
                 </div>
             </div>
         </div>
@@ -427,7 +468,166 @@ def home():
             function openVideoModal() {
                 document.getElementById("videoModal").style.display = "flex";
             }
-            function closeVideoModal() { document.getElementById('videoModal').style.display='none'; }
+            function closeVideoModal() { 
+                document.getElementById('videoModal').style.display='none'; 
+                // Clear modal state
+                document.getElementById('videoPrompt').value = '';
+                document.getElementById('videoImagePreview').innerHTML = '';
+                document.getElementById('videoImageCount').innerText = 'No images selected';
+                document.getElementById('videoDuration').value = 5;
+                document.getElementById('durationValue').innerText = '5 seconds';
+                document.getElementById('videoAspectRatio').value = '16:9';
+            }
+
+            // Video modal image handling
+            let videoModalImages = [];
+            
+            function handleVideoImage(input) {
+                if (input.files[0]) {
+                    let file = input.files[0];
+                    let reader = new FileReader();
+                    reader.onload = function(e) {
+                        // Check if we already have 4 images
+                        if (videoModalImages.length >= 4) {
+                            alert('Maximum 4 reference images allowed');
+                            return;
+                        }
+                        
+                        // Add image to array
+                        videoModalImages.push({
+                            data: e.target.result.split(',')[1],
+                            name: file.name
+                        });
+                        
+                        // Update preview
+                        updateVideoImagePreview();
+                    };
+                    reader.readAsDataURL(file);
+                }
+            }
+            
+            function updateVideoImagePreview() {
+                const preview = document.getElementById('videoImagePreview');
+                const count = document.getElementById('videoImageCount');
+                
+                preview.innerHTML = '';
+                
+                videoModalImages.forEach((img, index) => {
+                    let imgDiv = document.createElement('div');
+                    imgDiv.style.position = 'relative';
+                    imgDiv.style.width = '60px';
+                    imgDiv.style.height = '60px';
+                    
+                    let imgEl = document.createElement('img');
+                    imgEl.src = `data:image/jpeg;base64,${img.data}`;
+                    imgEl.style.width = '100%';
+                    imgEl.style.height = '100%';
+                    imgEl.style.borderRadius = '8px';
+                    imgEl.style.objectFit = 'cover';
+                    imgEl.style.border = '2px solid var(--primary)';
+                    
+                    let removeBtn = document.createElement('button');
+                    removeBtn.innerHTML = '<i class="fa-solid fa-times"></i>';
+                    removeBtn.style.position = 'absolute';
+                    removeBtn.style.top = '-8px';
+                    removeBtn.style.right = '-8px';
+                    removeBtn.style.background = '#ff0055';
+                    removeBtn.style.color = 'white';
+                    removeBtn.style.border = 'none';
+                    removeBtn.style.borderRadius = '50%';
+                    removeBtn.style.width = '20px';
+                    removeBtn.style.height = '20px';
+                    removeBtn.style.cursor = 'pointer';
+                    removeBtn.style.fontSize = '10px';
+                    removeBtn.onclick = () => {
+                        videoModalImages.splice(index, 1);
+                        updateVideoImagePreview();
+                    };
+                    
+                    imgDiv.appendChild(imgEl);
+                    imgDiv.appendChild(removeBtn);
+                    preview.appendChild(imgDiv);
+                });
+                
+                count.innerText = videoModalImages.length === 0 ? 'No images selected' : 
+                    `${videoModalImages.length} image${videoModalImages.length > 1 ? 's' : ''} selected`;
+            }
+
+            // Update duration display
+            document.getElementById('videoDuration').addEventListener('input', function() {
+                document.getElementById('durationValue').innerText = `${this.value} second${this.value > 1 ? 's' : ''}`;
+            });
+
+            // New function for modal video generation
+            async function generateVideoFromModal() {
+                let prompt = document.getElementById('videoPrompt').value.trim();
+                if(!prompt) {
+                    alert('Please enter a video prompt');
+                    return;
+                }
+                
+                addLoading("Generating video with SKYREELS...");
+                try {
+                    // Prepare reference images
+                    let refImages = videoModalImages.map(img => `data:image/jpeg;base64,${img.data}`);
+                    
+                    // Get parameters
+                    let duration = parseInt(document.getElementById('videoDuration').value);
+                    let aspectRatio = document.getElementById('videoAspectRatio').value;
+                    
+                    const response = await fetch("/generate_video", {
+                        method: "POST",
+                        headers: {"Content-Type": "application/json"},
+                        body: JSON.stringify({
+                            prompt: prompt,
+                            ref_images: refImages,
+                            duration: duration,
+                            aspect_ratio: aspectRatio
+                        })
+                    });
+                    
+                    const result = await response.json();
+                    removeLoading();
+                    
+                    if(result.status === "success" && result.video_url) {
+                        let div = document.createElement("div");
+                        div.className = "img-wrapper";
+                        let video = document.createElement("video");
+                        video.src = result.video_url;
+                        video.controls = true;
+                        video.style.width = "100%";
+                        video.style.height = "auto";
+                        video.style.borderRadius = "12px";
+                        div.appendChild(video);
+                        
+                        // Add metadata info
+                        let info = document.createElement("div");
+                        info.style.fontSize = "12px";
+                        info.style.color = "#888";
+                        info.style.marginTop = "5px";
+                        info.style.textAlign = "center";
+                        info.innerHTML = `Duration: ${result.duration}s | Resolution: ${result.resolution || 'Unknown'} | Cost: ${result.cost_credits || 'Unknown'} credits`;
+                        div.appendChild(info);
+                        
+                        let dl = document.createElement("a");
+                        dl.className = "download-btn";
+                        dl.innerHTML = '<i class="fa-solid fa-download"></i>';
+                        dl.href = result.video_url;
+                        dl.download = "ai-video.mp4";
+                        div.appendChild(dl);
+                        
+                        addMsg(div, "ai");
+                        
+                        // Close modal and clear state
+                        closeVideoModal();
+                    } else {
+                        addMsg("Video generation failed: " + (result.error || "Unknown error"), "ai");
+                    }
+                } catch(e) {
+                    removeLoading();
+                    addMsg("Video generation error: " + e, "ai");
+                }
+            }
 
             async function generateVideo() {
                 let t = txtIn.value.trim();
