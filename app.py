@@ -323,6 +323,7 @@ def home():
                 {id: "gemma-3-1b", name: "Gemma 3 1B", tag: "💎 GOOGLE"},
                 {id: "gemma-3-2b", name: "Gemma 3 2B", tag: "💎 GOOGLE"},
                 {id: "gemma-3-4b", name: "Gemma 3 4B", tag: "💎 GOOGLE"},
+                {id: "gemma-3-12b", name: "Gemma 3 12B", tag: "💎 GOOGLE"},
                 {id: "gemini-embedding-1.0", name: "Gemini Embedding 1.0", tag: "📊 GOOGLE"},
                 {id: "gemini-2.5-flash-native-audio-dialog", name: "Gemini 2.5 Flash Native Audio", tag: "🎤 GOOGLE"}
             ];
@@ -578,7 +579,7 @@ def home():
                 addLoading();
                 
                 // 3. Normal Routing
-                const serverModels = ["gemini-3-flash-preview", "gemma-3-27b-it", "gemini-2.5-flash", "gemini-2.5-flash-lite", "gemini-2.5-flash-tts", "gemini-robotics-er-1.5-preview", "gemma-3-1b", "gemma-3-2b", "gemma-3-4b", "gemini-embedding-1.0", "gemini-2.5-flash-native-audio-dialog"];
+                const serverModels = ["gemini-3-flash-preview", "gemma-3-27b-it", "gemini-2.5-flash", "gemini-2.5-flash-lite", "gemini-2.5-flash-tts", "gemini-robotics-er-1.5-preview", "gemma-3-1b", "gemma-3-2b", "gemma-3-4b", "gemma-3-12b", "gemini-embedding-1.0", "gemini-2.5-flash-native-audio-dialog"];
                 
                 if (serverModels.includes(selectedChatModel)) {
                     // Python Server
