@@ -104,26 +104,29 @@ def process_text():
             'generate_content', 'ask', 'generate', 'chat', 'content', 
             'create', 'text', 'process', 'run', 'execute', 'invoke', 
             'call', 'request', 'send', 'post', 'get', 'query', 
-            'respond', 'answer', 'complete'
+            'respond', 'answer', 'complete', 'stream', 'async_generate',
+            'generate_text', 'generate_chat', 'generate_response', 
+            'create_content', 'create_text', 'create_chat', 'create_response',
+            'get_response', 'get_content', 'get_text', 'get_chat'
         ]
         
         response = None
         for method_name in method_names:
             try:
                 method = getattr(client, method_name)
-                if method_name in ['generate_content', 'generate']:
+                if method_name in ['generate_content', 'generate', 'stream', 'async_generate']:
                     response = method(
                         model=model,
                         contents=[{"role": "user", "parts": [{"text": prompt}]}],
                         config=config
                     )
-                elif method_name == 'ask':
+                elif method_name in ['ask', 'generate_text', 'generate_response', 'create_content', 'create_text', 'create_response', 'get_response', 'get_content', 'get_text']:
                     response = method(
                         model=model,
                         prompt=prompt,
                         config=config
                     )
-                elif method_name == 'chat':
+                elif method_name in ['chat', 'generate_chat', 'create_chat', 'get_chat']:
                     response = method(
                         model=model,
                         messages=[{"role": "user", "content": prompt}],
