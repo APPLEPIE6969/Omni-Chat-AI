@@ -235,24 +235,35 @@ def generate_video():
                 processed_ref_images.append(img_data)
         
         # Submit video generation task
-        submit_response = requests.post(
-            'https://apis.skyreels.ai/api/v1/video/multiobject/submit',
-            headers={'Content-Type': 'application/json'},
-            json={
-                'api_key': SKYREELS_API_KEY,
-                'prompt': prompt,
-                'ref_images': processed_ref_images,
-                'duration': duration,
-                'aspect_ratio': aspect_ratio
-            }
-        )
-        
-        if submit_response.status_code != 200:
-            return jsonify({"error": f"SKYREELS API submit error: {submit_response.status_code} - {submit_response.text}"}), 500
-        
-        submit_result = submit_response.json()
-        if submit_result.get('code') != 200:
-            return jsonify({"error": f"SKYREELS API error: {submit_result.get('msg', 'Unknown error')}"}), 500
+        try:
+            submit_response = requests.post(
+                'https://apis.skyreels.ai/api/v1/video/multiobject/submit',
+                headers={'Content-Type': 'application/json'},
+                json={
+                    'api_key': SKYREELS_API_KEY,
+                    'prompt': prompt,
+                    'ref_images': processed_ref_images,
+                    'duration': duration,
+                    'aspect_ratio': aspect_ratio
+                },
+                timeout=30  # 30 second timeout
+            )
+            
+            if submit_response.status_code != 200:
+                return jsonify({"error": f"SKYREELS API submit error: {submit_response.status_code} - {submit_response.text}"}), 500
+            
+            submit_result = submit_response.json()
+            if submit_result.get('code') != 200:
+                return jsonify({"error": f"SKYREELS API error: {submit_result.get('msg', 'Unknown error')}"}), 500
+            
+        except requests.exceptions.Timeout:
+            return jsonify({"error": "SKYREELS API request timed out"}), 500
+        except requests.exceptions.ConnectionError:
+            return jsonify({"error": "SKYREELS API connection error"}), 500
+        except requests.exceptions.RequestException as e:
+            return jsonify({"error": f"SKYREELS API request failed: {str(e)}"}), 500
+        except Exception as e:
+            return jsonify({"error": f"SKYREELS API unexpected error: {str(e)}"}), 500
         
         task_id = submit_result.get('task_id')
         if not task_id:
