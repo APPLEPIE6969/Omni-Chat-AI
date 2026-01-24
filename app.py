@@ -98,55 +98,13 @@ def process_text():
             max_output_tokens=2048
         )
         
-        # Generate content using the correct method
-        # Try different method names that might exist
-        method_names = [
-            'generate_content', 'ask', 'generate', 'chat', 'content', 
-            'create', 'text', 'process', 'run', 'execute', 'invoke', 
-            'call', 'request', 'send', 'post', 'get', 'query', 
-            'respond', 'answer', 'complete', 'stream', 'async_generate',
-            'generate_text', 'generate_chat', 'generate_response', 
-            'create_content', 'create_text', 'create_chat', 'create_response',
-            'get_response', 'get_content', 'get_text', 'get_chat'
-        ]
-        
-        response = None
-        for method_name in method_names:
-            try:
-                method = getattr(client, method_name)
-                if method_name in ['generate_content', 'generate', 'stream', 'async_generate']:
-                    response = method(
-                        model=model,
-                        contents=[{"role": "user", "parts": [{"text": prompt}]}],
-                        config=config
-                    )
-                elif method_name in ['ask', 'generate_text', 'generate_response', 'create_content', 'create_text', 'create_response', 'get_response', 'get_content', 'get_text']:
-                    response = method(
-                        model=model,
-                        prompt=prompt,
-                        config=config
-                    )
-                elif method_name in ['chat', 'generate_chat', 'create_chat', 'get_chat']:
-                    response = method(
-                        model=model,
-                        messages=[{"role": "user", "content": prompt}],
-                        config=config
-                    )
-                else:
-                    # For other methods, try with prompt parameter
-                    response = method(
-                        model=model,
-                        prompt=prompt,
-                        config=config
-                    )
-                break  # Success, exit the loop
-            except AttributeError:
-                continue  # Try next method
-            except Exception as e:
-                continue  # Try next method if this one fails
-        
-        if response is None:
-            return jsonify({"text": f"Error: No supported method found for Google GenAI client. Tried {len(method_names)} different method names."})
+        # Use the new Google GenAI SDK properly
+        # The new SDK uses client.models.generate_content() method
+        response = client.models.generate_content(
+            model=model,
+            contents=prompt,
+            config=config
+        )
         
         # Extract text from response
         text = ""
