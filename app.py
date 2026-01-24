@@ -285,19 +285,11 @@ def home():
             const chatModels = [
                 {id: "gemini-3-flash-preview", name: "Gemini 3.0", tag: "⚡ GOOGLE"},
                 {id: "gemma-3-27b-it", name: "Gemma 3 27B", tag: "🔓 OPEN"},
-                {id: "gpt-5.2-codex", name: "GPT 5.2 Codex", tag: "💻 CODE"},
-                {id: "gpt-5.2-pro", name: "GPT 5.2 Pro", tag: "👑 ULTIMATE"},
-                {id: "gpt-5-nano", name: "GPT-5 Nano", tag: "⚡ FAST"},
-                {id: "o3", name: "OpenAI o3", tag: "🤯 REASON"},
-                {id: "gpt-4o", name: "GPT-4o", tag: "🔥 BEST"},
-                {id: "claude-opus-4-5", name: "Claude Opus 4.5", tag: "💎 OPUS"},
-                {id: "claude-sonnet-4-5", name: "Claude Sonnet 4.5", tag: "📚 SONNET"},
-                {id: "claude-haiku-4-5", name: "Claude Haiku 4.5", tag: "💨 HAIKU"},
-                {id: "gemini-3-pro-preview", name: "Gemini 3 Pro", tag: "🧠 PUTER"},
-                {id: "gemini-2.5-pro", name: "Gemini 2.5 Pro", tag: "⭐ PUTER"},
-                {id: "gemini-2.5-flash", name: "Gemini 2.5 Flash", tag: "⚡ PUTER"},
+                {id: "gemini-2.5-flash", name: "Gemini 2.5 Flash", tag: "⚡ GOOGLE"},
+                {id: "gemini-2.5-flash-lite", name: "Gemini 2.5 Flash Lite", tag: "⚡ GOOGLE"},
+                {id: "gemini-2.5-flash-tts", name: "Gemini 2.5 Flash TTS", tag: "🎤 GOOGLE"},
+                {id: "gemini-robotics-er-1.5-preview", name: "Gemini Robotics ER 1.5", tag: "🤖 GOOGLE"},
                 {id: "gemma-3-1b", name: "Gemma 3 1B", tag: "💎 GROQ"},
-                {id: "gemma-3-27b", name: "Gemma 3 27B", tag: "💎 GROQ"},
                 {id: "gemma-3-2b", name: "Gemma 3 2B", tag: "💎 GROQ"},
                 {id: "gemma-3-4b", name: "Gemma 3 4B", tag: "💎 GROQ"},
                 {id: "gemini-embedding-1.0", name: "Gemini Embedding 1.0", tag: "📊 GOOGLE"},
@@ -562,7 +554,7 @@ def home():
                 addLoading();
                 
                 // 3. Normal Routing
-                const serverModels = ["gemini-3-flash-preview", "gemma-3-27b-it"];
+                const serverModels = ["gemini-3-flash-preview", "gemma-3-27b-it", "gemini-2.5-flash", "gemini-2.5-flash-lite", "gemini-2.5-flash-tts", "gemini-robotics-er-1.5-preview", "gemma-3-1b", "gemma-3-2b", "gemma-3-4b", "gemini-embedding-1.0", "gemini-2.5-flash-native-audio-dialog"];
                 
                 if (serverModels.includes(selectedChatModel)) {
                     // Python Server
