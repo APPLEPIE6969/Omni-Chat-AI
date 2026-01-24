@@ -317,7 +317,6 @@ def home():
         <meta name="theme-color" content="#050508">
         <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;500;700&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
         <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
-        <script src="https://js.puter.com/v2/"></script>
         <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
 
         <style>
@@ -810,15 +809,6 @@ def home():
             }
 
             // --- HELPERS ---
-            function extractText(res) {
-                if (typeof res === 'string') return res;
-                if (res?.message?.content) {
-                    if (Array.isArray(res.message.content)) return res.message.content[0].text;
-                    return res.message.content;
-                }
-                return JSON.stringify(res);
-            }
-
             function addCopyBtns(element) {
                 element.querySelectorAll('pre').forEach(pre => {
                     if(pre.querySelector('.copy-btn')) return;
@@ -883,8 +873,18 @@ def home():
                     
                     for (let expert of experts) {
                         try {
-                            const response = await puter.ai.chat(prompt, { model: expert.model });
-                            const text = extractText(response);
+                            // Use server-side processing for all models
+                            const response = await fetch("/process_text", {
+                                method: "POST",
+                                headers: {"Content-Type": "application/json"},
+                                body: JSON.stringify({
+                                    prompt: prompt,
+                                    model: expert.model
+                                })
+                            });
+                            
+                            const result = await response.json();
+                            const text = result.text || "No response generated";
                             successfulResponses.push(`--- Expert: ${expert.name} ---\\n${text}\\n`);
                             console.log(`Director Mode: ${expert.name} succeeded`);
                         } catch (err) {
@@ -919,9 +919,19 @@ def home():
                     let synthesisSuccess = false;
                     for (let expert of experts) {
                         try {
-                            const synthesis = await puter.ai.chat(finalPrompt, { model: expert.model });
+                            const response = await fetch("/process_text", {
+                                method: "POST",
+                                headers: {"Content-Type": "application/json"},
+                                body: JSON.stringify({
+                                    prompt: finalPrompt,
+                                    model: expert.model
+                                })
+                            });
+                            
+                            const result = await response.json();
+                            const text = result.text || "No response generated";
                             removeLoading();
-                            addMsg(marked.parse(extractText(synthesis)), "ai");
+                            addMsg(marked.parse(text), "ai");
                             synthesisSuccess = true;
                             break;
                         } catch (err) {
@@ -958,20 +968,9 @@ def home():
                 txtIn.value = "";
                 
 
-                // 2. Image Generation
+                // 2. Image Generation (Removed - no image models available)
                 if (t.toLowerCase().startsWith("/image") || t.toLowerCase().includes("generate image")) {
-                    addLoading("Painting...");
-                    try {
-                        let prompt = t.replace("/image", "").trim();
-                        let img = await puter.ai.txt2img(prompt, { model: selectedImgModel });
-                        removeLoading();
-                        
-                        let div = document.createElement("div"); div.className="img-wrapper";
-                        img.style.width="100%"; div.appendChild(img);
-                        let dl = document.createElement("a"); dl.className="download-btn"; dl.innerHTML='<i class="fa-solid fa-download"></i>';
-                        dl.href = img.src; dl.download="ai-image.png"; div.appendChild(dl);
-                        addMsg(div, "ai");
-                    } catch(e) { removeLoading(); addMsg("Error: "+e, "ai"); }
+                    addMsg("Image generation is not available in this version. Please use text-based queries.", "ai");
                     return;
                 }
 
@@ -999,24 +998,9 @@ def home():
                         addMsg(marked.parse(d.text || "Error"), "ai"); 
                     });
                 } else {
-                    // Puter.js
-                    try {
-                        let response;
-                        if (imgBase64) {
-                             response = await puter.ai.chat(t, "data:image/jpeg;base64," + imgBase64, { model: selectedChatModel });
-                             imgBase64 = null; document.getElementById('previewContainer').style.display='none';
-                        } else {
-                             response = await puter.ai.chat(t, { model: selectedChatModel });
-                        }
-                        
-                        removeLoading();
-                        let text = extractText(response);
-                        addMsg(marked.parse(text), "ai"); 
-
-                    } catch(e) {
-                        removeLoading();
-                        addMsg("Error: " + e, "ai");
-                    }
+                    // Fallback for unsupported models (should not occur with current configuration)
+                    removeLoading();
+                    addMsg("Selected model is not available. Please choose a different model.", "ai");
                 }
             }
 
