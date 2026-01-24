@@ -867,25 +867,41 @@ def home():
 
             // --- DIRECTOR MODE (ENSEMBLE) ---
             async function runDirectorMode(prompt) {
-                addLoading("Consulting Experts (GPT 5.2, Claude 4.5, Gemini 3)...");
+                addLoading("Consulting Experts (Gemini 3 Flash, Gemini 2.5 Flash, Gemma 3 27B)...");
+                
+                // Best to worst models supported by GEMINI_KEY
                 const experts = [
-                    { model: 'gpt-5.2-pro', name: 'GPT-5.2 Pro' },
-                    { model: 'claude-opus-4-5', name: 'Claude Opus 4.5' },
-                    { model: 'gemini-3-pro-preview', name: 'Gemini 3 Pro' }
+                    { model: 'gemini-3-flash-preview', name: 'Gemini 3 Flash', priority: 1 },
+                    { model: 'gemini-2.5-flash', name: 'Gemini 2.5 Flash', priority: 2 },
+                    { model: 'gemma-3-27b-it', name: 'Gemma 3 27B', priority: 3 }
                 ];
 
                 try {
-                    // Parallel Requests
-                    const promises = experts.map(exp => 
-                        puter.ai.chat(prompt, { model: exp.model })
-                            .then(res => `--- Expert: ${exp.name} ---\\n${extractText(res)}\\n`) // ESCAPED NEWLINES
-                            .catch(err => `--- Expert: ${exp.name} ---\\nFailed: ${err}\\n`)
-                    );
+                    // Try models in order of priority, with fallback
+                    let successfulResponses = [];
+                    let failedModels = [];
                     
-                    const results = await Promise.all(promises);
-                    const rawData = results.join("\\n"); // ESCAPED NEWLINE
+                    for (let expert of experts) {
+                        try {
+                            const response = await puter.ai.chat(prompt, { model: expert.model });
+                            const text = extractText(response);
+                            successfulResponses.push(`--- Expert: ${expert.name} ---\\n${text}\\n`);
+                            console.log(`Director Mode: ${expert.name} succeeded`);
+                        } catch (err) {
+                            failedModels.push(`${expert.name}: ${err}`);
+                            console.log(`Director Mode: ${expert.name} failed - ${err}`);
+                        }
+                    }
+                    
+                    if (successfulResponses.length === 0) {
+                        removeLoading();
+                        addMsg("Director Mode Failed: All models failed. " + failedModels.join(", "), "ai");
+                        return;
+                    }
 
-                    // Synthesis
+                    const rawData = successfulResponses.join("\\n"); // ESCAPED NEWLINE
+
+                    // Synthesis using the best available model
                     removeLoading();
                     addLoading("Synthesizing Final Answer...");
                     
@@ -899,9 +915,25 @@ def home():
                         INSTRUCTION: Combine these opinions into one perfect response. Do not mention the experts. Just write the answer.
                     `;
 
-                    const synthesis = await puter.ai.chat(finalPrompt, { model: 'gemini-3-pro-preview' });
-                    removeLoading();
-                    addMsg(marked.parse(extractText(synthesis)), "ai");
+                    // Try synthesis models in priority order
+                    let synthesisSuccess = false;
+                    for (let expert of experts) {
+                        try {
+                            const synthesis = await puter.ai.chat(finalPrompt, { model: expert.model });
+                            removeLoading();
+                            addMsg(marked.parse(extractText(synthesis)), "ai");
+                            synthesisSuccess = true;
+                            break;
+                        } catch (err) {
+                            console.log(`Director Mode Synthesis: ${expert.name} failed - ${err}`);
+                            continue;
+                        }
+                    }
+                    
+                    if (!synthesisSuccess) {
+                        removeLoading();
+                        addMsg("Director Mode Failed: Could not synthesize response with any model.", "ai");
+                    }
                     
                 } catch (e) {
                     removeLoading();
