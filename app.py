@@ -117,6 +117,44 @@ def process_text():
     except Exception as e:
         return jsonify({"text": f"Error processing request: {str(e)}"})
 
+# --- IMAGE UPLOAD ENDPOINT ---
+@app.route('/upload_image', methods=['POST'])
+def upload_image():
+    """Simple image upload endpoint for temporary storage"""
+    if 'image' not in request.files:
+        return jsonify({"error": "No image file provided"}), 400
+    
+    file = request.files['image']
+    if file.filename == '':
+        return jsonify({"error": "No selected file"}), 400
+    
+    try:
+        # Create uploads directory if it doesn't exist
+        import os
+        upload_dir = 'uploads'
+        if not os.path.exists(upload_dir):
+            os.makedirs(upload_dir)
+        
+        # Generate unique filename
+        import uuid
+        filename = f"{uuid.uuid4()}_{file.filename}"
+        filepath = os.path.join(upload_dir, filename)
+        
+        # Save file
+        file.save(filepath)
+        
+        # Return URL
+        file_url = f"/uploads/{filename}"
+        return jsonify({"url": file_url})
+        
+    except Exception as e:
+        return jsonify({"error": f"Upload failed: {str(e)}"}), 500
+
+@app.route('/uploads/<filename>')
+def uploaded_file(filename):
+    """Serve uploaded files"""
+    return send_from_directory('uploads', filename)
+
 @app.route('/generate_video', methods=['POST'])
 def generate_video():
     if not SKYREELS_API_KEY:
@@ -132,6 +170,44 @@ def generate_video():
         return jsonify({"error": "No prompt provided"}), 400
     
     try:
+        # Convert base64 images to temporary URLs
+        processed_ref_images = []
+        for img_data in ref_images:
+            if img_data.startswith('data:image/'):
+                try:
+                    # Extract base64 data
+                    header, base64_data = img_data.split(',', 1)
+                    image_format = header.split('/')[1].split(';')[0]
+                    
+                    # Create temporary file
+                    import tempfile
+                    import os
+                    from flask import send_from_directory
+                    
+                    temp_dir = 'uploads'
+                    if not os.path.exists(temp_dir):
+                        os.makedirs(temp_dir)
+                    
+                    # Generate unique filename
+                    import uuid
+                    filename = f"{uuid.uuid4()}.{image_format}"
+                    filepath = os.path.join(temp_dir, filename)
+                    
+                    # Save base64 image to file
+                    with open(filepath, 'wb') as f:
+                        f.write(base64.b64decode(base64_data))
+                    
+                    # Create URL
+                    file_url = f"/uploads/{filename}"
+                    processed_ref_images.append(file_url)
+                    
+                except Exception as e:
+                    print(f"Error processing base64 image: {e}")
+                    continue
+            else:
+                # Already a URL
+                processed_ref_images.append(img_data)
+        
         # Submit video generation task
         submit_response = requests.post(
             'https://apis.skyreels.ai/api/v1/video/multiobject/submit',
@@ -139,7 +215,7 @@ def generate_video():
             json={
                 'api_key': SKYREELS_API_KEY,
                 'prompt': prompt,
-                'ref_images': ref_images,
+                'ref_images': processed_ref_images,
                 'duration': duration,
                 'aspect_ratio': aspect_ratio
             }
