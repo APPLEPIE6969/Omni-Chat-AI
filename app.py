@@ -101,7 +101,7 @@ def process_text():
         # Generate content using the correct method
         # Try different method names that might exist
         try:
-            # Method 1: generate_content
+            # Method 1: generate_content (most likely)
             response = client.generate_content(
                 model=model,
                 contents=[{"role": "user", "parts": [{"text": prompt}]}],
@@ -124,12 +124,36 @@ def process_text():
                         config=config
                     )
                 except AttributeError:
-                    # Method 4: content
-                    response = client.content(
-                        model=model,
-                        prompt=prompt,
-                        config=config
-                    )
+                    try:
+                        # Method 4: content
+                        response = client.content(
+                            model=model,
+                            prompt=prompt,
+                            config=config
+                        )
+                    except AttributeError:
+                        try:
+                            # Method 5: create
+                            response = client.create(
+                                model=model,
+                                prompt=prompt,
+                                config=config
+                            )
+                        except AttributeError:
+                            try:
+                                # Method 6: text
+                                response = client.text(
+                                    model=model,
+                                    prompt=prompt,
+                                    config=config
+                                )
+                            except AttributeError:
+                                # Method 7: ask
+                                response = client.ask(
+                                    model=model,
+                                    prompt=prompt,
+                                    config=config
+                                )
         
         # Extract text from response
         text = ""
