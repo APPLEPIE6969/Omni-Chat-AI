@@ -12,7 +12,6 @@ from flask_sock import Sock
 from gtts import gTTS
 from google import genai
 from google.genai import types
-from groq import Groq
 
 app = Flask(__name__)
 sock = Sock(app)
