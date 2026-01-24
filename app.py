@@ -123,32 +123,72 @@ def generate_video():
     if not SKYREELS_API_KEY:
         return jsonify({"error": "SKYREELS_API_KEY not configured"}), 500
     
-    prompt = request.json.get('prompt')
+    data = request.json
+    prompt = data.get('prompt')
+    ref_images = data.get('ref_images', [])
+    duration = data.get('duration', 5)
+    aspect_ratio = data.get('aspect_ratio', '16:9')
+    
     if not prompt:
         return jsonify({"error": "No prompt provided"}), 400
     
     try:
-        # Call SKYREELS API
-        headers = {
-            'Authorization': f'Bearer {SKYREELS_API_KEY}',
-            'Content-Type': 'application/json'
-        }
-        
-        # SKYREELS API endpoint (this is a placeholder - actual endpoint may vary)
-        response = requests.post(
-            'https://api.skyreels.ai/v1/generate',
-            headers=headers,
-            json={'prompt': prompt, 'duration': 5}  # 5 second video
+        # Submit video generation task
+        submit_response = requests.post(
+            'https://apis.skyreels.ai/api/v1/video/multiobject/submit',
+            headers={'Content-Type': 'application/json'},
+            json={
+                'api_key': SKYREELS_API_KEY,
+                'prompt': prompt,
+                'ref_images': ref_images,
+                'duration': duration,
+                'aspect_ratio': aspect_ratio
+            }
         )
         
-        if response.status_code == 200:
-            result = response.json()
-            return jsonify({
-                "video_url": result.get('video_url'),
-                "status": "success"
-            })
-        else:
-            return jsonify({"error": f"SKYREELS API error: {response.status_code}"}), 500
+        if submit_response.status_code != 200:
+            return jsonify({"error": f"SKYREELS API submit error: {submit_response.status_code}"}), 500
+        
+        submit_result = submit_response.json()
+        if submit_result.get('code') != 200:
+            return jsonify({"error": f"SKYREELS API error: {submit_result.get('msg', 'Unknown error')}"}), 500
+        
+        task_id = submit_result.get('task_id')
+        if not task_id:
+            return jsonify({"error": "Failed to get task ID from SKYREELS API"}), 500
+        
+        # Poll for task completion
+        max_attempts = 60  # 5 minutes with 5-second intervals
+        for attempt in range(max_attempts):
+            import time
+            time.sleep(5)  # Wait 5 seconds between polls
+            
+            query_response = requests.get(
+                f'https://apis.skyreels.ai/api/v1/video/multiobject/task/{task_id}'
+            )
+            
+            if query_response.status_code != 200:
+                continue
+            
+            query_result = query_response.json()
+            status = query_result.get('status')
+            
+            if status == 'success':
+                video_data = query_result.get('data', {})
+                return jsonify({
+                    "video_url": video_data.get('video_url'),
+                    "duration": video_data.get('duration'),
+                    "resolution": video_data.get('resolution'),
+                    "cost_credits": video_data.get('cost_credits'),
+                    "status": "success"
+                })
+            elif status == 'failed':
+                return jsonify({"error": f"Video generation failed: {query_result.get('msg', 'Unknown error')}"}), 500
+            elif status == 'unknown':
+                return jsonify({"error": "Unknown task status from SKYREELS API"}), 500
+            # Continue polling for 'submitted', 'pending', or 'running'
+        
+        return jsonify({"error": "Video generation timed out after 5 minutes"}), 500
             
     except Exception as e:
         return jsonify({"error": f"Video generation failed: {str(e)}"}), 500
@@ -399,10 +439,22 @@ def home():
                 
                 addLoading("Generating video with SKYREELS...");
                 try {
+                    // Prepare reference images if any are uploaded
+                    let refImages = [];
+                    if (imgBase64) {
+                        // Convert base64 to data URL for reference image
+                        refImages.push(`data:image/jpeg;base64,${imgBase64}`);
+                    }
+                    
                     const response = await fetch("/generate_video", {
                         method: "POST",
                         headers: {"Content-Type": "application/json"},
-                        body: JSON.stringify({prompt: t})
+                        body: JSON.stringify({
+                            prompt: t,
+                            ref_images: refImages,
+                            duration: 5,
+                            aspect_ratio: "16:9"
+                        })
                     });
                     
                     const result = await response.json();
@@ -418,6 +470,15 @@ def home():
                         video.style.height = "auto";
                         video.style.borderRadius = "12px";
                         div.appendChild(video);
+                        
+                        // Add metadata info
+                        let info = document.createElement("div");
+                        info.style.fontSize = "12px";
+                        info.style.color = "#888";
+                        info.style.marginTop = "5px";
+                        info.style.textAlign = "center";
+                        info.innerHTML = `Duration: ${result.duration}s | Resolution: ${result.resolution || 'Unknown'} | Cost: ${result.cost_credits || 'Unknown'} credits`;
+                        div.appendChild(info);
                         
                         let dl = document.createElement("a");
                         dl.className = "download-btn";
