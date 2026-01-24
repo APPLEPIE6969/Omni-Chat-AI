@@ -84,8 +84,39 @@ def live_socket(ws):
 @app.route('/process_text', methods=['POST'])
 def process_text():
     data = request.json
-    # Basic server echo if needed, main logic is client-side
-    return jsonify({"text": "OK"})
+    prompt = data.get('prompt', '')
+    model = data.get('model', 'gemini-3-flash-preview')
+    
+    try:
+        # Use GEMINI_KEY for all models (Gemini and Gemma)
+        client = genai.Client(api_key=GEMINI_KEY, http_options={'api_version': 'v1alpha'})
+        
+        # Configure the model
+        config = types.GenerateContentConfig(
+            temperature=0.7,
+            top_p=0.95,
+            top_k=40,
+            max_output_tokens=2048
+        )
+        
+        # Generate content
+        response = client.generate_content(
+            model=model,
+            contents=[{"role": "user", "parts": [{"text": prompt}]}],
+            config=config
+        )
+        
+        # Extract text from response
+        text = ""
+        if response.candidates and response.candidates[0].content:
+            for part in response.candidates[0].content.parts:
+                if hasattr(part, 'text'):
+                    text += part.text
+        
+        return jsonify({"text": text or "No response generated"})
+        
+    except Exception as e:
+        return jsonify({"text": f"Error processing request: {str(e)}"})
 
 @app.route('/generate_video', methods=['POST'])
 def generate_video():
@@ -284,26 +315,19 @@ def home():
             // --- DATA CONFIGURATION ---
             const chatModels = [
                 {id: "gemini-3-flash-preview", name: "Gemini 3.0", tag: "⚡ GOOGLE"},
-                {id: "gemma-3-27b-it", name: "Gemma 3 27B", tag: "🔓 OPEN"},
+                {id: "gemma-3-27b-it", name: "Gemma 3 27B", tag: "🔓 GOOGLE"},
                 {id: "gemini-2.5-flash", name: "Gemini 2.5 Flash", tag: "⚡ GOOGLE"},
                 {id: "gemini-2.5-flash-lite", name: "Gemini 2.5 Flash Lite", tag: "⚡ GOOGLE"},
                 {id: "gemini-2.5-flash-tts", name: "Gemini 2.5 Flash TTS", tag: "🎤 GOOGLE"},
                 {id: "gemini-robotics-er-1.5-preview", name: "Gemini Robotics ER 1.5", tag: "🤖 GOOGLE"},
-                {id: "gemma-3-1b", name: "Gemma 3 1B", tag: "💎 GROQ"},
-                {id: "gemma-3-2b", name: "Gemma 3 2B", tag: "💎 GROQ"},
-                {id: "gemma-3-4b", name: "Gemma 3 4B", tag: "💎 GROQ"},
+                {id: "gemma-3-1b", name: "Gemma 3 1B", tag: "💎 GOOGLE"},
+                {id: "gemma-3-2b", name: "Gemma 3 2B", tag: "💎 GOOGLE"},
+                {id: "gemma-3-4b", name: "Gemma 3 4B", tag: "💎 GOOGLE"},
                 {id: "gemini-embedding-1.0", name: "Gemini Embedding 1.0", tag: "📊 GOOGLE"},
                 {id: "gemini-2.5-flash-native-audio-dialog", name: "Gemini 2.5 Flash Native Audio", tag: "🎤 GOOGLE"}
             ];
 
-            const imgModels = [
-                {id: "black-forest-labs/FLUX.1-schnell", name: "Flux Schnell", tag: "🚀 FAST"},
-                {id: "black-forest-labs/FLUX.1.1-pro", name: "Flux 1.1 Pro", tag: "⭐ BEST"},
-                {id: "dall-e-3", name: "DALL-E 3", tag: "🧠 SMART"},
-                {id: "ideogram/ideogram-3.0", name: "Ideogram 3", tag: "🔤 TEXT"},
-                {id: "google/imagen-4.0-ultra", name: "Imagen 4 Ultra", tag: "⭐ GOOGLE"},
-                {id: "gpt-image-1", name: "GPT Image", tag: "🤖 GPT"}
-            ];
+            const imgModels = [];
 
             // State
             let selectedChatModel = "gemini-3-flash-preview"; 
