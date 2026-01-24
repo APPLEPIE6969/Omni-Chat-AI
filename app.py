@@ -406,7 +406,7 @@ def home():
             </div>
         </div>
 
-        <div class="chat" id="chat"><div class="msg ai">Online. Director Mode uses GPT-5.2 Pro + Claude Opus + Gemini 3.</div></div>
+        <div class="chat" id="chat"><div class="msg ai">Online. Director Mode uses Gemini 3 Flash + Gemini 2.5 Flash + Gemma 3 27B.</div></div>
 
         <div class="input-area">
             <input type="file" id="fileInput" accept="image/*" onchange="handleFile(this)">
@@ -538,7 +538,7 @@ def home():
                 if (dtEnabled) { 
                     el.classList.add("active"); 
                     icon.style.display = "block"; 
-                    addMsg("Director Mode: Enabled (Ensemble: GPT-5.2 Pro, Claude Opus 4.5, Gemini 3 Pro).", "ai");
+                    addMsg("Director Mode: Enabled (Ensemble: Gemini 3 Flash, Gemini 2.5 Flash, Gemma 3 27B).", "ai");
                 } else { 
                     el.classList.remove("active"); 
                     icon.style.display = "none"; 
