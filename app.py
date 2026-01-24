@@ -98,7 +98,7 @@ def process_text():
             max_output_tokens=2048
         )
         
-        # Generate content
+        # Generate content using the correct method
         response = client.generate_content(
             model=model,
             contents=[{"role": "user", "parts": [{"text": prompt}]}],
@@ -146,7 +146,7 @@ def generate_video():
         )
         
         if submit_response.status_code != 200:
-            return jsonify({"error": f"SKYREELS API submit error: {submit_response.status_code}"}), 500
+            return jsonify({"error": f"SKYREELS API submit error: {submit_response.status_code} - {submit_response.text}"}), 500
         
         submit_result = submit_response.json()
         if submit_result.get('code') != 200:
