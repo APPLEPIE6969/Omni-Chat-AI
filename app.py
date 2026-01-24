@@ -99,11 +99,37 @@ def process_text():
         )
         
         # Generate content using the correct method
-        response = client.generate_content(
-            model=model,
-            contents=[{"role": "user", "parts": [{"text": prompt}]}],
-            config=config
-        )
+        # Try different method names that might exist
+        try:
+            # Method 1: generate_content
+            response = client.generate_content(
+                model=model,
+                contents=[{"role": "user", "parts": [{"text": prompt}]}],
+                config=config
+            )
+        except AttributeError:
+            try:
+                # Method 2: generate
+                response = client.generate(
+                    model=model,
+                    contents=[{"role": "user", "parts": [{"text": prompt}]}],
+                    config=config
+                )
+            except AttributeError:
+                try:
+                    # Method 3: chat
+                    response = client.chat(
+                        model=model,
+                        messages=[{"role": "user", "content": prompt}],
+                        config=config
+                    )
+                except AttributeError:
+                    # Method 4: content
+                    response = client.content(
+                        model=model,
+                        prompt=prompt,
+                        config=config
+                    )
         
         # Extract text from response
         text = ""
