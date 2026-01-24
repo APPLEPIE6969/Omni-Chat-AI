@@ -156,12 +156,112 @@ def process_text():
                                         config=config
                                     )
                                 except AttributeError:
-                                    # Method 8: process
-                                    response = client.process(
-                                        model=model,
-                                        prompt=prompt,
-                                        config=config
-                                    )
+                                    try:
+                                        # Method 8: process
+                                        response = client.process(
+                                            model=model,
+                                            prompt=prompt,
+                                            config=config
+                                        )
+                                    except AttributeError:
+                                        try:
+                                            # Method 9: run
+                                            response = client.run(
+                                                model=model,
+                                                prompt=prompt,
+                                                config=config
+                                            )
+                                        except AttributeError:
+                                            try:
+                                                # Method 10: execute
+                                                response = client.execute(
+                                                    model=model,
+                                                    prompt=prompt,
+                                                    config=config
+                                                )
+                                            except AttributeError:
+                                                try:
+                                                    # Method 11: invoke
+                                                    response = client.invoke(
+                                                        model=model,
+                                                        prompt=prompt,
+                                                        config=config
+                                                    )
+                                                except AttributeError:
+                                                    try:
+                                                        # Method 12: call
+                                                        response = client.call(
+                                                            model=model,
+                                                            prompt=prompt,
+                                                            config=config
+                                                        )
+                                                    except AttributeError:
+                                                        try:
+                                                            # Method 13: request
+                                                            response = client.request(
+                                                                model=model,
+                                                                prompt=prompt,
+                                                                config=config
+                                                            )
+                                                        except AttributeError:
+                                                            try:
+                                                                # Method 14: send
+                                                                response = client.send(
+                                                                    model=model,
+                                                                    prompt=prompt,
+                                                                    config=config
+                                                                )
+                                                            except AttributeError:
+                                                                try:
+                                                                    # Method 15: post
+                                                                    response = client.post(
+                                                                        model=model,
+                                                                        prompt=prompt,
+                                                                        config=config
+                                                                    )
+                                                                except AttributeError:
+                                                                    try:
+                                                                        # Method 16: get
+                                                                        response = client.get(
+                                                                            model=model,
+                                                                            prompt=prompt,
+                                                                            config=config
+                                                                        )
+                                                                    except AttributeError:
+                                                                        try:
+                                                                            # Method 17: query
+                                                                            response = client.query(
+                                                                                model=model,
+                                                                                prompt=prompt,
+                                                                                config=config
+                                                                            )
+                                                                        except AttributeError:
+                                                                            try:
+                                                                                # Method 18: respond
+                                                                                response = client.respond(
+                                                                                    model=model,
+                                                                                    prompt=prompt,
+                                                                                    config=config
+                                                                                )
+                                                                            except AttributeError:
+                                                                                try:
+                                                                                    # Method 19: answer
+                                                                                    response = client.answer(
+                                                                                        model=model,
+                                                                                        prompt=prompt,
+                                                                                        config=config
+                                                                                    )
+                                                                                except AttributeError:
+                                                                                    try:
+                                                                                        # Method 20: complete
+                                                                                        response = client.complete(
+                                                                                            model=model,
+                                                                                            prompt=prompt,
+                                                                                            config=config
+                                                                                        )
+                                                                                    except AttributeError:
+                                                                                        # Method 21: fallback - return error
+                                                                                        return jsonify({"text": f"Error: No supported method found for Google GenAI client. Tried 20 different method names."})
         
         # Extract text from response
         text = ""
