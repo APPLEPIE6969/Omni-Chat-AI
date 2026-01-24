@@ -99,61 +99,12 @@ def process_text():
         )
         
         # Generate content using the correct method
-        # Try different method names that might exist
-        try:
-            # Method 1: generate_content (most likely)
-            response = client.generate_content(
-                model=model,
-                contents=[{"role": "user", "parts": [{"text": prompt}]}],
-                config=config
-            )
-        except AttributeError:
-            try:
-                # Method 2: generate
-                response = client.generate(
-                    model=model,
-                    contents=[{"role": "user", "parts": [{"text": prompt}]}],
-                    config=config
-                )
-            except AttributeError:
-                try:
-                    # Method 3: chat
-                    response = client.chat(
-                        model=model,
-                        messages=[{"role": "user", "content": prompt}],
-                        config=config
-                    )
-                except AttributeError:
-                    try:
-                        # Method 4: content
-                        response = client.content(
-                            model=model,
-                            prompt=prompt,
-                            config=config
-                        )
-                    except AttributeError:
-                        try:
-                            # Method 5: create
-                            response = client.create(
-                                model=model,
-                                prompt=prompt,
-                                config=config
-                            )
-                        except AttributeError:
-                            try:
-                                # Method 6: text
-                                response = client.text(
-                                    model=model,
-                                    prompt=prompt,
-                                    config=config
-                                )
-                            except AttributeError:
-                                # Method 7: ask
-                                response = client.ask(
-                                    model=model,
-                                    prompt=prompt,
-                                    config=config
-                                )
+        # The Google GenAI client uses generate_content method
+        response = client.generate_content(
+            model=model,
+            contents=[{"role": "user", "parts": [{"text": prompt}]}],
+            config=config
+        )
         
         # Extract text from response
         text = ""
